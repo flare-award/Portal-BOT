@@ -24,7 +24,7 @@ class CubePickupStrategy:
     """
     Progressively escalates grab techniques if simple interaction fails:
     Stage 1: Direct reticle alignment & Use
-    Stage 2: Close approach + Crouch + Look Down + Use
+    Stage 2: Close approach + Look Down + Use + Re-level camera
     Stage 3: Back up, Strafe realignment, Re-approach + Use
     Stage 4: Jump-Grab (for cubes elevated on pedestals)
     """
@@ -56,19 +56,20 @@ class CubePickupStrategy:
         actions: List[ActionCommand] = []
 
         if self.attempt_count == 0:
-            if abs(dx) > 25 or abs(dy) > 35:
+            if abs(dx) > 25 or abs(dy) > 30:
                 actions.append(aim_at((tx, ty), reason="Align crosshair directly on Cube"))
             
-            if cube_obj.bbox.area > 3500 or ty > h * 0.65:
+            if cube_obj.bbox.area > 3000 or ty > h * 0.65:
                 actions.append(interact_use(reason="Stage 1: Direct grab (E)"))
             else:
                 actions.append(move_forward(0.3, reason="Step closer to cube"))
 
         elif self.attempt_count == 1:
-            bot_log.action("Stage 2: Approach closer, look down, and crouch-grab")
+            bot_log.action("Stage 2: Approach closer, look down, grab and re-level")
             actions.append(move_forward(0.35, reason="Stage 2: Close step"))
-            actions.append(rotate_camera(mouse_dx=0, mouse_dy=55, reason="Pitch down toward floor"))
+            actions.append(rotate_camera(mouse_dx=0, mouse_dy=40, reason="Pitch down toward cube"))
             actions.append(interact_use(reason="Stage 2: Grab with low pitch (E)"))
+            actions.append(rotate_camera(mouse_dx=0, mouse_dy=-40, reason="Re-level camera back to eye level"))
             actions.append(wait(0.1))
 
         elif self.attempt_count == 2:
@@ -84,6 +85,6 @@ class CubePickupStrategy:
             actions.append(move_forward(0.3, reason="Approach ledge"))
             actions.append(jump(reason="Jump towards elevated cube"))
             actions.append(interact_use(reason="Stage 4: Mid-air grab (E)"))
-            actions.append(wait(0.2))
+            actions.append(wait(0.15))
 
         return actions

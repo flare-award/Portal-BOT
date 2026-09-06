@@ -1,4 +1,4 @@
-"""Interactive object detector for Portal 1 (Cubes, Buttons, Doors, Turrets, Fizzlers)."""
+"""High-Precision Object Detector for Portal 1 (Cubes, Buttons, Doors, Elevators, Turrets)."""
 
 from typing import Any, Dict, List, Optional, Tuple
 import cv2
@@ -9,7 +9,7 @@ from portal_bot.core.types import BoundingBox, DetectedObject, ObjectType
 
 
 class ObjectDetector:
-    """Detects cubes, buttons, doors, and other chamber props."""
+    """Detects cubes, floor buttons, exit doors, elevators, and turrets."""
 
     def __init__(self, config: VisionConfig):
         self.config = config
@@ -32,18 +32,19 @@ class ObjectDetector:
         return detected
 
     def _detect_buttons(self, frame: np.ndarray) -> List[DetectedObject]:
-        """Detects 1500MW Super-Colliding Floor Buttons."""
+        """Detects 1500MW Heavy Duty Super-Colliding Floor Buttons."""
         h, w = frame.shape[:2]
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         results: List[DetectedObject] = []
 
-        # Mask for unpressed Red button dome
-        mask_r1 = cv2.inRange(hsv, np.array(self.config.button_red_hsv_lower1), np.array(self.config.button_red_hsv_upper1))
-        mask_r2 = cv2.inRange(hsv, np.array(self.config.button_red_hsv_lower2), np.array(self.config.button_red_hsv_upper2))
-        mask_red = cv2.bitwise_or(mask_r1, mask_r2)
+        # Floor buttons are strictly in lower half of viewport (ground plane)
+        lower_half_hsv = hsv.copy()
+        lower_half_hsv[:int(h * 0.38), :] = 0
 
-        # Buttons are situated in lower 2/3 of screen (ground plane)
-        mask_red[:int(h * 0.35), :] = 0
+        # Mask for unpressed Red dome
+        mask_r1 = cv2.inRange(lower_half_hsv, np.array((0, 130, 90)), np.array((10, 255, 255)))
+        mask_r2 = cv2.inRange(lower_half_hsv, np.array((170, 130, 90)), np.array((180, 255, 255)))
+        mask_red = cv2.bitwise_or(mask_r1, mask_r2)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask_red = cv2.morphologyEx(mask_red, cv2.MORPH_CLOSE, kernel)
@@ -51,22 +52,23 @@ class ObjectDetector:
         contours, _ = cv2.findContours(mask_red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area > 40:
+            if area > 35:
                 x, y, cw, ch = cv2.boundingRect(cnt)
                 aspect = cw / max(1.0, float(ch))
-                if 0.8 <= aspect <= 5.0:
+                # Button dome in perspective is elliptical (aspect ratio 1.0 to 4.5)
+                if 0.8 <= aspect <= 5.0 and y > h * 0.38:
                     bbox = BoundingBox(x=x, y=y, w=cw, h=ch)
                     results.append(DetectedObject(
                         object_type=ObjectType.BUTTON_FLOOR,
                         bbox=bbox,
-                        confidence=min(1.0, area / 1000.0),
+                        confidence=min(1.0, area / 800.0),
                         attributes={"is_pressed": False, "dome_color": "red"}
                     ))
 
         return results
 
     def _detect_cubes(self, frame: np.ndarray) -> List[DetectedObject]:
-        """Detects Weighted Storage Cubes and Companion Cubes."""
+        """Detects Weighted Storage Cubes and Companion Cubes in 3D world."""
         h, w = frame.shape[:2]
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         results: List[DetectedObject] = []
@@ -78,8 +80,10 @@ class ObjectDetector:
             np.array(self.config.cube_ring_hsv_upper)
         )
         
-        # Filter out upper HUD
+        # Exclude HUD / top-left signage and weapon in bottom-right corner
         mask_cube_rings[:int(h * 0.15), :int(w * 0.25)] = 0
+        # Exclude Portal Gun weapon model in extreme bottom right
+        mask_cube_rings[int(h * 0.65):, int(w * 0.70):] = 0
         
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         mask_cube_rings = cv2.morphologyEx(mask_cube_rings, cv2.MORPH_CLOSE, kernel)
@@ -90,6 +94,7 @@ class ObjectDetector:
             if 15 < area < 25000:
                 x, y, cw, ch = cv2.boundingRect(cnt)
                 aspect = cw / max(1.0, float(ch))
+                # Cubes have aspect ratio close to 1.0 (0.5 to 2.2)
                 if 0.5 <= aspect <= 2.2:
                     pad_x = int(cw * 0.5)
                     pad_y = int(ch * 0.5)
@@ -109,12 +114,12 @@ class ObjectDetector:
         return results
 
     def _detect_doors(self, frame: np.ndarray) -> List[DetectedObject]:
-        """Detects Chamber Exit Doors, Iris Doors, and Elevators."""
+        """Detects Aperture Iris Doors, Sliding Exit Doors, and Glass Elevators."""
         h, w = frame.shape[:2]
         results: List[DetectedObject] = []
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 50, 150)
+        edges = cv2.Canny(gray, 40, 140)
         
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 5))
         dilated = cv2.dilate(edges, kernel, iterations=1)
@@ -122,30 +127,33 @@ class ObjectDetector:
         contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area > 800:
+            if area > 700:
                 x, y, cw, ch = cv2.boundingRect(cnt)
                 aspect = ch / max(1.0, float(cw))
-                if 1.0 <= aspect <= 4.0 and ch > h * 0.12:
+                # Doors & Elevators are tall vertical structures (aspect 1.0 to 4.5)
+                if 0.9 <= aspect <= 4.5 and ch > h * 0.12 and cw > w * 0.04:
                     door_roi = frame[y:y+ch, x:x+cw]
                     hsv_roi = cv2.cvtColor(door_roi, cv2.COLOR_BGR2HSV)
                     
-                    mask_open = cv2.inRange(hsv_roi, np.array((85, 100, 100)), np.array((125, 255, 255)))
+                    # Blue/cyan illuminated exit doorway or open elevator glow
+                    mask_open = cv2.inRange(hsv_roi, np.array((85, 110, 110)), np.array((125, 255, 255)))
                     open_ratio = np.count_nonzero(mask_open) / max(1, float(cw * ch))
                     
-                    is_open = open_ratio > 0.15
+                    # A door is genuinely open if it has significant blue/cyan illuminated area inside
+                    is_open = open_ratio > 0.18
                     
                     bbox = BoundingBox(x=x, y=y, w=cw, h=ch)
                     results.append(DetectedObject(
                         object_type=ObjectType.DOOR,
                         bbox=bbox,
-                        confidence=min(1.0, area / 5000.0),
+                        confidence=min(1.0, area / 4000.0),
                         attributes={"is_open": is_open, "open_ratio": open_ratio}
                     ))
 
         return results
 
     def _detect_hazards_and_fixtures(self, frame: np.ndarray) -> List[DetectedObject]:
-        """Detects Turrets and Material Emancipation Grills (Fizzlers)."""
+        """Detects Sentry Turrets and Material Emancipation Grills (Fizzlers)."""
         h, w = frame.shape[:2]
         results: List[DetectedObject] = []
         

@@ -24,7 +24,7 @@ class EngineState:
         self.log_file_path: Optional[str] = None
         self.current_map: str = ""
         self.current_chamber: int = 0
-        self.gun_state: PortalGunState = PortalGunState.NO_GUN
+        self.gun_state: Optional[PortalGunState] = None
         self.blue_portal_placed: bool = False
         self.orange_portal_placed: bool = False
         self.button_pressed: bool = False
@@ -167,48 +167,41 @@ class ConsoleLogReader:
             chamber_id = self.CHAMBER_MAPS.get(map_name, 0)
             self.state.current_chamber = chamber_id
             
-            if chamber_id in [0, 1]:
-                self.state.gun_state = PortalGunState.NO_GUN
-                self.state.blue_portal_placed = False
-                self.state.orange_portal_placed = False
-            elif 2 <= chamber_id <= 10:
-                self.state.gun_state = PortalGunState.SINGLE_PORTAL_BLUE
-                self.state.blue_portal_placed = False
-                self.state.orange_portal_placed = True
-            else:
-                self.state.gun_state = PortalGunState.DUAL_PORTAL
-                self.state.blue_portal_placed = False
-                self.state.orange_portal_placed = False
-
+            # Reset placement flags on new chamber load
+            self.state.blue_portal_placed = False
+            self.state.orange_portal_placed = False
             self.state.door_open = False
             self.state.button_pressed = False
             self.state.holding_cube = False
             self.state.player_dead = False
             self.state.level_complete = False
-            bot_log.state(f"Chamber loaded: 0{chamber_id} ({map_name}), Gun: {self.state.gun_state.value}")
+
+            if chamber_id in [0, 1]:
+                self.state.gun_state = PortalGunState.NO_GUN
+            
+            bot_log.state(f"Chamber loaded: 0{chamber_id} ({map_name})")
             event_bus.publish("chamber_changed", chamber_id)
 
         # 2. Weapon & Portal Gun Pickups
-        if "weapon_portalgun" in line.lower() or "picked up portal gun" in line.lower():
-            if self.state.current_chamber >= 11 or "dual" in line.lower():
+        if "weapon_portalgun" in line.lower() or "picked up portal gun" in line.lower() or "give_portalgun" in line.lower():
+            if "dual" in line.lower() or "both" in line.lower():
                 self.state.gun_state = PortalGunState.DUAL_PORTAL
             else:
                 self.state.gun_state = PortalGunState.SINGLE_PORTAL_BLUE
             bot_log.state(f"Portal Gun equipped: {self.state.gun_state.value}")
 
         # 3. Portal Placement Events
-        if "FirePortal: Blue" in line or "FireBluePortal" in line or "Placed Blue Portal" in line:
+        if "FirePortal: Blue" in line or "FireBluePortal" in line or "Placed Blue Portal" in line or "blue portal placed" in line.lower():
             self.state.blue_portal_placed = True
             bot_log.vision("Game Engine Event: Blue Portal Placed")
 
-        if "FirePortal: Orange" in line or "FireOrangePortal" in line or "Placed Orange Portal" in line:
+        if "FirePortal: Orange" in line or "FireOrangePortal" in line or "Placed Orange Portal" in line or "orange portal placed" in line.lower():
             self.state.orange_portal_placed = True
             bot_log.vision("Game Engine Event: Orange Portal Placed")
 
         if "Portal fizzled" in line or "Cleared portals" in line or "fizzler" in line.lower():
             self.state.blue_portal_placed = False
-            if self.state.gun_state == PortalGunState.DUAL_PORTAL:
-                self.state.orange_portal_placed = False
+            self.state.orange_portal_placed = False
             bot_log.vision("Game Engine Event: Portals Cleared / Fizzled")
 
         # 4. Button & Cube Triggers

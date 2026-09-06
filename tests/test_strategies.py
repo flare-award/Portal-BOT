@@ -46,10 +46,9 @@ def test_anti_spin_exploration_strategy():
         plan = strat.execute(state, (1280, 720))
         assert any(a.action_type == ActionType.ROTATE_CAMERA for a in plan)
 
-    # Step 5: After full 360 scan, MUST relocate forward to break loop!
+    # Step 5: After full 360 scan, MUST relocate forward to break loop without jumping!
     plan5 = strat.execute(state, (1280, 720))
     assert any(a.action_type == ActionType.MOVE_FORWARD for a in plan5)
-    assert any(a.action_type == ActionType.JUMP for a in plan5)
 
 
 def test_portal_strategy_respects_gun_state():

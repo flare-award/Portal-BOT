@@ -63,7 +63,6 @@ class VisionPipeline:
         # 3. Surface & Hazard Analysis
         portalable_mask_small, surface_objects = self.surface_analyzer.analyze_surfaces(small_frame)
 
-        # Scale surface bounding boxes back to native resolution
         for obj in surface_objects:
             obj.bbox.x = int(obj.bbox.x * scale_x)
             obj.bbox.y = int(obj.bbox.y * scale_y)
@@ -103,26 +102,31 @@ class VisionPipeline:
             obj.bbox.h = int(obj.bbox.h * scale_y)
             obj.center_screen = (obj.bbox.cx, obj.bbox.cy)
 
-        # Check holding cube state
-        holding_cube = False
-        hand_roi = small_frame[int(proc_h * 0.65):, int(proc_w * 0.55):]
-        if hand_roi.size > 0:
-            hsv_hand = cv2.cvtColor(hand_roi, cv2.COLOR_BGR2HSV)
-            mask_hand_cube = cv2.inRange(
-                hsv_hand,
+        # Check holding cube state:
+        # A held cube sits centrally in the player's hands (0.28*w <= x <= 0.72*w, y >= 0.45*h)
+        # It must NOT be the portal gun in the bottom-right corner!
+        center_hand_roi = small_frame[int(proc_h * 0.45):, int(proc_w * 0.28):int(proc_w * 0.72)]
+        is_holding_cube = False
+        if center_hand_roi.size > 0:
+            hsv_center = cv2.cvtColor(center_hand_roi, cv2.COLOR_BGR2HSV)
+            mask_center_cube = cv2.inRange(
+                hsv_center,
                 np.array(self.config.cube_ring_hsv_lower),
                 np.array(self.config.cube_ring_hsv_upper)
             )
-            if np.count_nonzero(mask_hand_cube) > 15:
-                holding_cube = True
+            # Must have substantial cyan/aperture logo mass in center
+            if np.count_nonzero(mask_center_cube) > 80:
+                is_holding_cube = True
                 self.holding_cube_state = True
             else:
                 self.holding_cube_state = False
 
+        # Filter out held-cube artifacts from 3D world interactive object list
         filtered_interactive = []
         for obj in interactive_objects:
-            if obj.object_type == ObjectType.CUBE and obj.bbox.cy > orig_h * 0.70 and obj.bbox.cx > orig_w * 0.55:
-                holding_cube = True
+            # Exclude large central held cube from world targets
+            if obj.object_type == ObjectType.CUBE and obj.bbox.cy > orig_h * 0.55 and (orig_w * 0.25 < obj.bbox.cx < orig_w * 0.75) and obj.bbox.area > 20000:
+                is_holding_cube = True
                 self.holding_cube_state = True
             else:
                 filtered_interactive.append(obj)
@@ -160,7 +164,6 @@ class VisionPipeline:
 
         hazard_ahead = any(obj.object_type == ObjectType.HAZARD_ACID for obj in all_objects)
 
-        # Instantaneous FPS calculation with exponential smoothing
         now = time.time()
         dt = now - self.last_time
         if dt > 0:
@@ -222,7 +225,6 @@ class VisionPipeline:
             cv2.rectangle(debug, (bx, max(0, by - th - 6)), (bx + tw + 6, by), color, -1)
             cv2.putText(debug, label, (bx + 3, max(12, by - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
 
-        # Crosshair HUD
         cx, cy = w // 2, h // 2
         ch_state = state.player.crosshair
         ch_col = (0, 255, 0) if ch_state.on_portalable_surface else (80, 80, 80)
@@ -230,7 +232,6 @@ class VisionPipeline:
         cv2.line(debug, (cx - 12, cy), (cx + 12, cy), ch_col, 1)
         cv2.line(debug, (cx, cy - 12), (cx, cy + 12), ch_col, 1)
 
-        # Status Banner
         cv2.rectangle(debug, (0, 0), (w, 36), (20, 20, 25), -1)
         gun_label = state.player.gun_state.value
         held_str = "CUBE" if state.player.holding_cube else "NONE"

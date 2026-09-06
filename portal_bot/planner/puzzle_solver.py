@@ -123,10 +123,15 @@ class DecisionAgent:
         return wait(0.05, reason="Awaiting state update")
 
     def _plan_reach_exit(self, state: GameState, goal: SubGoal) -> ActionCommand:
-        """Navigates towards the open exit door."""
+        """Navigates towards the open exit door with pitch stabilization."""
         w, h = self.frame_size
         door_obj = self.world_model.get_exit_door()
         
+        # Level camera pitch if looking too low/high
+        if abs(state.player.pitch) > 15.0:
+            dy_correct = int(-state.player.pitch * 0.8)
+            return rotate_camera(mouse_dx=0, mouse_dy=dy_correct, reason="Level camera pitch")
+
         if door_obj:
             tx, ty = door_obj.screen_pos
             dx = tx - w // 2
