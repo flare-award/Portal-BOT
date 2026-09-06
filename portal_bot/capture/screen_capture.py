@@ -11,6 +11,7 @@ import numpy as np
 
 try:
     import mss
+    import mss.exception
 except ImportError:
     mss = None
 
@@ -41,7 +42,6 @@ class WindowFinder:
                         for pattern in title_patterns:
                             if pattern.lower() in title.lower():
                                 rect = win32gui.GetWindowRect(hwnd)
-                                # Ensure window has meaningful dimension
                                 if rect[2] - rect[0] > 100 and rect[3] - rect[1] > 100:
                                     target_hwnd = hwnd
                                     window_rect = {
@@ -59,7 +59,6 @@ class WindowFinder:
             except Exception as e:
                 logger.debug(f"win32gui search failed or not available: {e}")
 
-        # Generic pygetwindow fallback if available
         try:
             import pygetwindow as gw  # type: ignore
             for pattern in title_patterns:
@@ -80,18 +79,25 @@ class WindowFinder:
 
 
 class ScreenCapture:
-    """Threaded high-performance screen capture manager."""
+    """Threaded high-performance screen capture manager with headless fallback."""
 
     def __init__(self, config: CaptureConfig):
         self.config = config
-        self.sct = mss.mss() if mss else None
+        self.sct = None
+        if mss:
+            try:
+                self.sct = mss.mss()
+            except Exception as e:
+                logger.warning(f"mss screen capture unavailable (headless or missing X11 display): {e}")
+                self.sct = None
+
         self.running = False
         self.thread: Optional[threading.Thread] = None
         
         self.current_frame: Optional[np.ndarray] = None
         self.frame_lock = threading.Lock()
         self.frame_count = 0
-        self.fps = 0.0
+        self.fps = 60.0
         self.last_fps_time = time.time()
         self.fps_frame_count = 0
         
@@ -107,21 +113,29 @@ class ScreenCapture:
             return True
         else:
             self.window_found = False
-            # Default to primary monitor if game window not explicitly found
             if self.sct and self.sct.monitors:
-                primary = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
-                self.window_region = {
-                    "left": primary["left"],
-                    "top": primary["top"],
-                    "width": primary["width"],
-                    "height": primary["height"]
-                }
+                try:
+                    primary = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
+                    self.window_region = {
+                        "left": primary["left"],
+                        "top": primary["top"],
+                        "width": primary["width"],
+                        "height": primary["height"]
+                    }
+                except Exception:
+                    pass
             return False
 
     def capture_frame(self) -> Optional[np.ndarray]:
         """Captures a single frame synchronously (BGR numpy array)."""
         if not self.sct:
-            return None
+            # Headless fallback: generate blank frame with status text
+            blank = np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
+            cv2.putText(
+                blank, "PORTAL 1 WINDOW NOT CONNECTED / HEADLESS", (int(self.config.width * 0.18), int(self.config.height * 0.5)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (120, 120, 120), 2
+            )
+            return blank
 
         try:
             if not self.window_region:
@@ -136,10 +150,8 @@ class ScreenCapture:
 
             sct_img = self.sct.grab(monitor)
             frame_bgra = np.array(sct_img)
-            # Convert BGRA to BGR
             frame_bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
 
-            # Resize if needed to target resolution
             if frame_bgr.shape[1] != self.config.width or frame_bgr.shape[0] != self.config.height:
                 frame_bgr = cv2.resize(frame_bgr, (self.config.width, self.config.height), interpolation=cv2.INTER_LINEAR)
 
@@ -161,7 +173,6 @@ class ScreenCapture:
             return None
 
     def start(self):
-        """Starts asynchronous capture thread."""
         if self.running:
             return
         self.running = True
