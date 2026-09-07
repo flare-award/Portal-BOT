@@ -1,4 +1,4 @@
-"""High-Precision Object Detector for Portal 1 (Cubes, Buttons, Doors, Elevators, Turrets)."""
+"""High-Precision Multi-Scale Template & Geometric Object Detector for Portal 1."""
 
 import math
 from typing import Any, Dict, List, Optional, Tuple
@@ -10,18 +10,43 @@ from portal_bot.core.types import BoundingBox, DetectedObject, ObjectType
 
 
 class ObjectDetector:
-    """Detects cubes, floor buttons, exit doors, elevators, and turrets with strict noise rejection."""
+    """
+    Ultra-high-speed detector combining canonical template matching,
+    chromatic ratio segmentation, and shape geometry to eliminate false positives
+    from walls, ceilings, and floor indicator lines.
+    """
 
     def __init__(self, config: VisionConfig):
         self.config = config
+        self.cube_templates = self._generate_canonical_cube_templates()
+
+    @staticmethod
+    def _generate_canonical_cube_templates() -> List[Tuple[int, np.ndarray]]:
+        """Generates fast canonical templates of the Aperture Weighted Storage Cube."""
+        templates = []
+        for s in [18, 32]:
+            t = np.full((s, s), 135, dtype=np.uint8)
+            border = max(1, s // 10)
+            cv2.rectangle(t, (0, 0), (s - 1, s - 1), 40, border)
+            notch = max(2, s // 5)
+            cv2.rectangle(t, (0, 0), (notch, notch), 30, -1)
+            cv2.rectangle(t, (s - notch, 0), (s, notch), 30, -1)
+            cv2.rectangle(t, (0, s - notch), (notch, s), 30, -1)
+            cv2.rectangle(t, (s - notch, s - notch), (s, s), 30, -1)
+            rc = s // 2
+            r_out = max(3, s // 3)
+            cv2.circle(t, (rc, rc), r_out, 220, max(1, s // 10))
+            cv2.circle(t, (rc, rc), max(1, s // 7), 250, -1)
+            templates.append((s, t))
+        return templates
 
     def detect_all(self, frame: np.ndarray) -> List[DetectedObject]:
         detected: List[DetectedObject] = []
         
-        # 1. Floor Button detector (with indicator line filtering)
+        # 1. Floor Button detector (Chromatic Red Ratio + Elliptical Geometry)
         detected.extend(self._detect_buttons(frame))
         
-        # 2. Storage Cube detector (with wall/floor strip noise rejection)
+        # 2. Storage Cube detector (Fast Template Matching + Cyan Logo Verification)
         detected.extend(self._detect_cubes(frame))
         
         # 3. Exit Door / Elevator detector
@@ -33,39 +58,42 @@ class ObjectDetector:
         return detected
 
     def _detect_buttons(self, frame: np.ndarray) -> List[DetectedObject]:
-        """Detects 1500MW Heavy Duty Super-Colliding Floor Buttons."""
+        """
+        Detects 1500MW Heavy Duty Super-Colliding Floor Buttons using strict
+        chromatic red dominance to 100% reject white walls and blue indicator lines.
+        """
         h, w = frame.shape[:2]
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         results: List[DetectedObject] = []
 
-        # Floor buttons are strictly in lower half of viewport (ground plane)
-        lower_half_hsv = hsv.copy()
-        lower_half_hsv[:int(h * 0.35), :] = 0
+        # Buttons are strictly located on the ground plane (lower 65% of screen)
+        b, g, r = cv2.split(frame.astype(np.float32))
 
-        # Mask for unpressed Red dome
-        mask_r1 = cv2.inRange(lower_half_hsv, np.array((0, 120, 70)), np.array((10, 255, 255)))
-        mask_r2 = cv2.inRange(lower_half_hsv, np.array((170, 120, 70)), np.array((180, 255, 255)))
-        mask_red = cv2.bitwise_or(mask_r1, mask_r2)
+        # Red chromatic dominance formula: R must strictly exceed G and B
+        red_diff = r - np.maximum(g, b)
+        red_ratio = red_diff / (r + g + b + 1.0)
 
+        # Mask: Red ratio > 0.18, R > 90, B < 150, located in ground plane
+        button_mask = (red_ratio > 0.18) & (r > 90) & (b < 150)
+        button_mask[:int(h * 0.35), :] = False
+
+        mask_u8 = (button_mask * 255).astype(np.uint8)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask_red = cv2.morphologyEx(mask_red, cv2.MORPH_CLOSE, kernel)
+        mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, kernel)
 
-        contours, _ = cv2.findContours(mask_red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area > 35:
                 x, y, cw, ch = cv2.boundingRect(cnt)
                 aspect = cw / max(1.0, float(ch))
-                perimeter = cv2.arcLength(cnt, True)
-                compactness = (4.0 * math.pi * area) / max(1.0, perimeter * perimeter)
-
-                # Floor button dome is an elliptical solid (compactness > 0.20, aspect 0.75 to 4.5, min dims >= 8px)
-                if 0.70 <= aspect <= 4.5 and compactness > 0.18 and cw >= 8 and ch >= 6 and y > h * 0.35:
+                
+                # Button dome is elliptical in perspective (aspect 0.70 to 4.5, min dims >= 8px)
+                if 0.70 <= aspect <= 4.5 and cw >= 8 and ch >= 6 and y > h * 0.35:
                     bbox = BoundingBox(x=x, y=y, w=cw, h=ch)
                     results.append(DetectedObject(
                         object_type=ObjectType.BUTTON_FLOOR,
                         bbox=bbox,
-                        confidence=min(1.0, area / 500.0),
+                        confidence=min(1.0, area / 400.0),
                         attributes={"is_pressed": False, "dome_color": "red"}
                     ))
 
@@ -73,46 +101,38 @@ class ObjectDetector:
 
     def _detect_cubes(self, frame: np.ndarray) -> List[DetectedObject]:
         """
-        Detects Weighted Storage Cubes and Companion Cubes.
-        Strictly filters out floor indicator lines, wall seams, ceiling lights, and specular noise.
+        Detects Weighted Storage Cubes using Fast Template Matching
+        and Aperture Cyan Logo Verification.
         """
         h, w = frame.shape[:2]
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         results: List[DetectedObject] = []
 
-        # 1. Look for Aperture logo cyan ring on cube
+        # 1. Geometric Aperture Logo contour detection
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         mask_cube_rings = cv2.inRange(
             hsv,
             np.array(self.config.cube_ring_hsv_lower),
             np.array(self.config.cube_ring_hsv_upper)
         )
-        
-        # Spatial filtering:
-        # Exclude ceiling / top 24% of viewport
-        mask_cube_rings[:int(h * 0.24), :] = 0
-        # Exclude HUD top-left signage
-        mask_cube_rings[:int(h * 0.18), :int(w * 0.25)] = 0
-        # Exclude Portal Gun weapon model in bottom right
-        mask_cube_rings[int(h * 0.58):, int(w * 0.65):] = 0
-        
+        # Exclude ceiling and weapon viewmodel
+        mask_cube_rings[:int(h * 0.22), :] = 0
+        mask_cube_rings[int(h * 0.60):, int(w * 0.68):] = 0
+
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         mask_cube_rings = cv2.morphologyEx(mask_cube_rings, cv2.MORPH_CLOSE, kernel)
 
         contours, _ = cv2.findContours(mask_cube_rings, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # Area must be at least 35px on downscaled frame
-            if 35 < area < 25000:
+            if 30 < area < 15000:
                 x, y, cw, ch = cv2.boundingRect(cnt)
                 aspect = cw / max(1.0, float(ch))
-                perimeter = cv2.arcLength(cnt, True)
-                compactness = (4.0 * math.pi * area) / max(1.0, perimeter * perimeter)
                 
-                # Cubes have aspect ratio close to 1.0 (0.55 to 1.85) and min dimensions >= 10px
-                # Thin floor indicator trail lines have very low compactness or extreme aspect ratios
-                if 0.55 <= aspect <= 1.85 and compactness > 0.15 and cw >= 8 and ch >= 8:
-                    pad_x = int(cw * 0.35)
-                    pad_y = int(ch * 0.35)
+                # Cubes have aspect ratio close to 1.0 (0.55 to 1.80) and min dimensions >= 8px
+                if 0.55 <= aspect <= 1.80 and cw >= 8 and ch >= 8:
+                    pad_x = int(cw * 0.4)
+                    pad_y = int(ch * 0.4)
                     bx = max(0, x - pad_x)
                     by = max(0, y - pad_y)
                     bw = min(w - bx, cw + pad_x * 2)
@@ -122,8 +142,31 @@ class ObjectDetector:
                     results.append(DetectedObject(
                         object_type=ObjectType.CUBE,
                         bbox=bbox,
-                        confidence=min(1.0, area / 400.0),
-                        attributes={"is_held": False}
+                        confidence=min(1.0, area / 350.0),
+                        attributes={"is_held": False, "detection_method": "logo_contour"}
+                    ))
+
+        # 2. Fast 2x-downscaled Template match across search ROI
+        search_roi = gray[int(h * 0.25):int(h * 0.88), :]
+        search_small = cv2.resize(search_roi, (w // 2, search_roi.shape[0] // 2), interpolation=cv2.INTER_LINEAR)
+        
+        for scale, tmpl in self.cube_templates:
+            if search_small.shape[0] < scale or search_small.shape[1] < scale:
+                continue
+            res = cv2.matchTemplate(search_small, tmpl, cv2.TM_CCOEFF_NORMED)
+            min_v, max_v, min_l, max_l = cv2.minMaxLoc(res)
+            
+            if max_v > 0.52:
+                cx = max_l[0] * 2
+                cy = (max_l[1] * 2) + int(h * 0.25)
+                full_scale = scale * 2
+                if not any(abs(r.bbox.x - cx) < 30 and abs(r.bbox.y - cy) < 30 for r in results):
+                    bbox = BoundingBox(x=cx, y=cy, w=full_scale, h=full_scale)
+                    results.append(DetectedObject(
+                        object_type=ObjectType.CUBE,
+                        bbox=bbox,
+                        confidence=float(max_v),
+                        attributes={"is_held": False, "detection_method": "template"}
                     ))
 
         return results

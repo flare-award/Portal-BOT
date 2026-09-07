@@ -20,10 +20,11 @@ class StateFusion:
             cv_state.current_chamber = engine_state.current_chamber
 
         # Gun State fusion:
-        if engine_state.gun_state is not None:
+        # If CV detected DUAL_PORTAL from real HUD reticle brackets, keep DUAL_PORTAL!
+        if cv_state.player.gun_state == PortalGunState.DUAL_PORTAL:
+            pass
+        elif engine_state.gun_state is not None:
             cv_state.player.gun_state = engine_state.gun_state
-        elif cv_state.player.gun_state == PortalGunState.NO_GUN:
-            cv_state.player.gun_state = PortalGunState.NO_GUN
         
         # If player has NO gun
         if cv_state.player.gun_state == PortalGunState.NO_GUN:
