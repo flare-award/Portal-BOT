@@ -26,8 +26,8 @@ class CrosshairAnalyzer:
         state = CrosshairState(center_pos=(cx, cy))
         gun_state = PortalGunState.NO_GUN
         
-        # Adaptive ROI size proportional to screen height (handles 720p, 1080p, 1440p, 4K)
-        roi_half = max(24, int(h * 0.065))
+        # Proportional ROI size (adaptive to 720p, 1080p, 1440p, 4K)
+        roi_half = max(28, int(h * 0.065))
         x1 = max(0, cx - roi_half)
         y1 = max(0, cy - roi_half)
         x2 = min(w, cx + roi_half)
@@ -37,43 +37,43 @@ class CrosshairAnalyzer:
         if raw_roi.size == 0 or raw_roi.shape[0] < 20 or raw_roi.shape[1] < 20:
             return state, gun_state
 
-        # Normalize to standard 96x96 analysis canvas
+        # Normalize to standard 96x96 analysis patch
         norm_roi = cv2.resize(raw_roi, (96, 96), interpolation=cv2.INTER_LINEAR)
         hsv_roi = cv2.cvtColor(norm_roi, cv2.COLOR_BGR2HSV)
         gray_roi = cv2.cvtColor(norm_roi, cv2.COLOR_BGR2GRAY)
 
-        # 1. Left Bracket Analysis (Blue Portal Indicator: x in [14..36], y in [24..72])
+        # 1. Left Bracket Analysis (Blue Portal Reticle: x in [14..36], y in [24..72])
         left_hsv = hsv_roi[24:72, 14:36]
         left_gray = gray_roi[24:72, 14:36]
         
-        # Saturated Cyan/Blue glow (active placed blue portal)
+        # High-saturation Cyan/Blue glow
         mask_blue = cv2.inRange(
             left_hsv,
-            np.array((85, 120, 140)),
+            np.array((85, 140, 160)),
             np.array((125, 255, 255))
         )
         blue_glow_count = int(np.count_nonzero(mask_blue))
 
         # Edge detection for unlit bracket presence
-        left_edges = cv2.Canny(left_gray, 35, 110)
+        left_edges = cv2.Canny(left_gray, 40, 120)
         left_edge_count = int(np.count_nonzero(left_edges))
         
         has_left_bracket = (left_edge_count >= 8) or (blue_glow_count >= 10)
 
-        # 2. Right Bracket Analysis (Orange Portal Indicator: x in [60..82], y in [24..72])
+        # 2. Right Bracket Analysis (Orange Portal Reticle: x in [60..82], y in [24..72])
         right_hsv = hsv_roi[24:72, 60:82]
         right_gray = gray_roi[24:72, 60:82]
         
-        # Saturated Amber/Orange glow (active placed orange portal)
+        # High-saturation Amber/Orange glow
         mask_orange = cv2.inRange(
             right_hsv,
-            np.array((6, 130, 140)),
+            np.array((6, 140, 160)),
             np.array((25, 255, 255))
         )
         orange_glow_count = int(np.count_nonzero(mask_orange))
 
         # Edge detection for unlit right bracket presence
-        right_edges = cv2.Canny(right_gray, 35, 110)
+        right_edges = cv2.Canny(right_gray, 40, 120)
         right_edge_count = int(np.count_nonzero(right_edges))
         
         has_right_bracket = (right_edge_count >= 8) or (orange_glow_count >= 10)
@@ -86,14 +86,12 @@ class CrosshairAnalyzer:
         else:
             gun_state = PortalGunState.NO_GUN
 
-        # 4. Placed Portal Status (Only if solid glow is present in the respective bracket)
+        # 4. Placed Portal Status (Solid illuminated neon glow in bracket)
         if gun_state != PortalGunState.NO_GUN:
-            # Blue portal is placed only if left bracket contains concentrated solid blue glow
-            state.blue_ring_filled = (blue_glow_count >= 14)
+            state.blue_ring_filled = (blue_glow_count >= 16)
             
-            # Orange portal is placed only if right bracket contains concentrated solid orange glow
             if gun_state == PortalGunState.DUAL_PORTAL:
-                state.orange_ring_filled = (orange_glow_count >= 14)
+                state.orange_ring_filled = (orange_glow_count >= 16)
             else:
                 state.orange_ring_filled = False
         else:

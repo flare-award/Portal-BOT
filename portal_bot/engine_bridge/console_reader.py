@@ -178,29 +178,24 @@ class ConsoleLogReader:
 
             if chamber_id in [0, 1]:
                 self.state.gun_state = PortalGunState.NO_GUN
-            elif chamber_id >= 11:
-                self.state.gun_state = PortalGunState.DUAL_PORTAL
-            # For chambers 2-10, retain DUAL_PORTAL if already held, otherwise default to SINGLE
-            elif self.state.gun_state != PortalGunState.DUAL_PORTAL:
-                self.state.gun_state = PortalGunState.SINGLE_PORTAL_BLUE
             
             bot_log.state(f"Chamber loaded: 0{chamber_id} ({map_name})")
             event_bus.publish("chamber_changed", chamber_id)
 
         # 2. Weapon & Portal Gun Pickups
         if "weapon_portalgun" in line.lower() or "picked up portal gun" in line.lower() or "give_portalgun" in line.lower():
-            if "dual" in line.lower() or "both" in line.lower() or "upgrade" in line.lower():
+            if "dual" in line.lower() or "both" in line.lower() or "upgrade" in line.lower() or "weapon_portalgun_dual" in line.lower():
                 self.state.gun_state = PortalGunState.DUAL_PORTAL
             else:
-                self.state.gun_state = PortalGunState.SINGLE_PORTAL_BLUE
+                self.state.gun_state = PortalGunState.DUAL_PORTAL if self.state.gun_state == PortalGunState.DUAL_PORTAL else PortalGunState.SINGLE_PORTAL_BLUE
             bot_log.state(f"Portal Gun equipped: {self.state.gun_state.value}")
 
         # 3. Portal Placement Events
-        if "FirePortal: Blue" in line or "FireBluePortal" in line or "Placed Blue Portal" in line or "blue portal placed" in line.lower():
+        if "FirePortal: Blue" in line or "FireBluePortal" in line or "Placed Blue Portal" in line:
             self.state.blue_portal_placed = True
             bot_log.vision("Game Engine Event: Blue Portal Placed")
 
-        if "FirePortal: Orange" in line or "FireOrangePortal" in line or "Placed Orange Portal" in line or "orange portal placed" in line.lower():
+        if "FirePortal: Orange" in line or "FireOrangePortal" in line or "Placed Orange Portal" in line:
             self.state.orange_portal_placed = True
             bot_log.vision("Game Engine Event: Orange Portal Placed")
 

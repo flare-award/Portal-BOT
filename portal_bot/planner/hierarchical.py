@@ -41,8 +41,8 @@ class HierarchicalPlanner:
             ))
             return subgoals
 
-        # 2. Exit Door is Open -> Proceed to exit!
-        if state.exit_door_open:
+        # 2. Exit Door is Open or Button is Pressed -> Proceed to exit!
+        if state.exit_door_open or state.button_pressed:
             door_obj = self.world_model.get_exit_door()
             screen_pt = door_obj.screen_pos if door_obj else None
             subgoals.append(SubGoal(
@@ -54,7 +54,7 @@ class HierarchicalPlanner:
             ))
             return subgoals
 
-        # 3. Holding Cube -> Carry to Floor Button
+        # 3. Holding Cube -> Carry directly to Floor Button
         cube_in_hand = state.player.holding_cube
         button_obj = self.world_model.get_best_button()
 
@@ -88,7 +88,7 @@ class HierarchicalPlanner:
             ))
             return subgoals
 
-        # 5. Default: Systematic Exploration
+        # 5. Default: Systematic Horizontal Exploration
         subgoals.append(SubGoal(
             id=self._next_goal_id(GoalType.EXPLORE_SURROUNDINGS),
             goal_type=GoalType.EXPLORE_SURROUNDINGS,

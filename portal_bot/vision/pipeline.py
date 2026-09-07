@@ -76,7 +76,7 @@ class VisionPipeline:
             obj.bbox.h = int(obj.bbox.h * scale_y)
             obj.center_screen = (obj.bbox.cx, obj.bbox.cy)
 
-        # 4. Portal Detection
+        # 4. Portal Detection in 3D Scene
         portal_state, portal_objects = self.portal_detector.detect_portals(small_frame)
         for obj in portal_objects:
             obj.bbox.x = int(obj.bbox.x * scale_x)
@@ -85,19 +85,9 @@ class VisionPipeline:
             obj.bbox.h = int(obj.bbox.h * scale_y)
             obj.center_screen = (obj.bbox.cx, obj.bbox.cy)
 
-        if portal_state.blue_bbox:
-            portal_state.blue_bbox.x = int(portal_state.blue_bbox.x * scale_x)
-            portal_state.blue_bbox.y = int(portal_state.blue_bbox.y * scale_y)
-            portal_state.blue_bbox.w = int(portal_state.blue_bbox.w * scale_x)
-            portal_state.blue_bbox.h = int(portal_state.blue_bbox.h * scale_y)
-            portal_state.blue_screen_pos = (portal_state.blue_bbox.cx, portal_state.blue_bbox.cy)
-
-        if portal_state.orange_bbox:
-            portal_state.orange_bbox.x = int(portal_state.orange_bbox.x * scale_x)
-            portal_state.orange_bbox.y = int(portal_state.orange_bbox.y * scale_y)
-            portal_state.orange_bbox.w = int(portal_state.orange_bbox.w * scale_x)
-            portal_state.orange_bbox.h = int(portal_state.orange_bbox.h * scale_y)
-            portal_state.orange_screen_pos = (portal_state.orange_bbox.cx, portal_state.orange_bbox.cy)
+        # Placed status is determined strictly by reticle HUD brackets / gun state
+        portal_state.blue_active = crosshair_state.blue_ring_filled
+        portal_state.orange_active = crosshair_state.orange_ring_filled
 
         # 5. Interactive Object Detection (Cubes, Buttons, Doors)
         interactive_objects = self.object_detector.detect_all(small_frame)
@@ -109,12 +99,11 @@ class VisionPipeline:
             obj.center_screen = (obj.bbox.cx, obj.bbox.cy)
 
         # 6. Held Cube & Player State Analysis
-        # Check if cube is held in center view (0.22*w <= x <= 0.78*w, y >= 0.38*h)
-        center_hand_roi = small_frame[int(proc_h * 0.38):, int(proc_w * 0.22):int(proc_w * 0.78)]
+        # A held cube in Portal 1 occupies a massive central-lower view (0.24*w <= x <= 0.76*w, y >= 0.42*h)
+        center_hand_roi = small_frame[int(proc_h * 0.42):, int(proc_w * 0.24):int(proc_w * 0.76)]
         is_holding_cube = False
         if center_hand_roi.size > 0:
             hsv_center = cv2.cvtColor(center_hand_roi, cv2.COLOR_BGR2HSV)
-            gray_center = cv2.cvtColor(center_hand_roi, cv2.COLOR_BGR2GRAY)
             
             # Aperture logo cyan ring mask
             mask_center_cube = cv2.inRange(
@@ -122,13 +111,10 @@ class VisionPipeline:
                 np.array(self.config.cube_ring_hsv_lower),
                 np.array(self.config.cube_ring_hsv_upper)
             )
-            
-            # Central edge mass (cube box chamfer lines)
-            edges_center = cv2.Canny(gray_center, 40, 120)
-            edge_density = float(np.count_nonzero(edges_center)) / float(center_hand_roi.shape[0] * center_hand_roi.shape[1])
             cube_ring_pixels = int(np.count_nonzero(mask_center_cube))
 
-            if cube_ring_pixels > 40 or (edge_density > 0.08 and cube_ring_pixels > 15):
+            # Must have substantial Aperture cyan emblem pixels (> 70px) in hand ROI
+            if cube_ring_pixels > 70:
                 is_holding_cube = True
                 self.holding_cube_state = True
             else:
@@ -140,7 +126,7 @@ class VisionPipeline:
         has_open_door = False
 
         for obj in interactive_objects:
-            if obj.object_type == ObjectType.CUBE and obj.bbox.cy > orig_h * 0.50 and (orig_w * 0.22 < obj.bbox.cx < orig_w * 0.78) and obj.bbox.area > 15000:
+            if obj.object_type == ObjectType.CUBE and obj.bbox.cy > orig_h * 0.52 and (orig_w * 0.22 < obj.bbox.cx < orig_w * 0.78) and obj.bbox.area > 20000:
                 is_holding_cube = True
                 self.holding_cube_state = True
             else:
@@ -160,12 +146,7 @@ class VisionPipeline:
         death_detected = self.hud_analyzer.check_death_screen(small_frame)
         level_complete = self.hud_analyzer.check_level_complete(small_frame)
 
-        # 8. Portal Placement Status:
-        # Crosshair reticle brackets determine true placed status
-        portal_state.blue_active = crosshair_state.blue_ring_filled
-        portal_state.orange_active = crosshair_state.orange_ring_filled
-
-        # 9. Build Comprehensive Game State
+        # 8. Build Comprehensive Game State
         game_state = GameState(
             timestamp=t0,
             frame_id=self.frame_count,
