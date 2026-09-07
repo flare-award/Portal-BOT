@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aperture Science Control Center</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Orbitron:wght@500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="navbar">
+            <div class="logo-group">
+                <div class="aperture-icon"></div>
+                <div>
+                    <h1 class="logo-title">PORTAL-BOT v2.0</h1>
+                    <p class="logo-subtitle">Autonomous Source-Engine Agent | Aperture Science Control</p>
+                </div>
+            </div>
+            
+            <div class="header-right">
+                <div class="engine-log-pill" id="engineLogPill">
+                    <span class="engine-dot" id="engineDot"></span>
+                    <span id="engineLogText">GAME LOG: WAITING</span>
+                </div>
+                <div class="status-pill" id="botStatusPill">
+                    <span class="status-indicator" id="statusDot"></span>
+                    <span id="botStatusText">IDLE</span>
+                </div>
+                <button class="btn btn-emergency" id="btnEmergencyStop" title="Shortcut: Press F8">
+                    <span class="icon">🚨</span> EMERGENCY STOP [F8]
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content Grid -->
+        <main class="main-grid">
+            <!-- Left Column: Vision Stream & Video Debug View -->
+            <section class="card vision-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="pulse-cyan"></span> HIGH-SPEED COMPUTER VISION FEED (60+ FPS)
+                    </div>
+                    <div class="stream-stats">
+                        <span class="badge badge-fps" id="fpsBadge">FPS: 60.0</span>
+                        <span class="badge badge-gun" id="gunBadge">GUN: NO GUN</span>
+                        <span class="badge" id="confBadge">CONF: 1.00</span>
+                    </div>
+                </div>
+                
+                <div class="video-container">
+                    <img id="videoFeed" src="/video_feed" alt="Live Game Capture Stream">
+                </div>
+
+                <!-- Controls Toolbar -->
+                <div class="controls-toolbar">
+                    <button class="btn btn-start" id="btnStart">
+                        <span class="icon">▶</span> START BOT
+                    </button>
+                    <button class="btn btn-pause" id="btnPause">
+                        <span class="icon">⏸</span> PAUSE
+                    </button>
+                    <button class="btn btn-resume" id="btnResume" style="display:none;">
+                        <span class="icon">⏵</span> RESUME
+                    </button>
+                    <button class="btn btn-stop" id="btnStop">
+                        <span class="icon">⏹</span> STOP
+                    </button>
+                    <button class="btn btn-config" id="btnInstallCfg" title="Install portal_bot.cfg for 100% accurate game logs">
+                        <span class="icon">⚙️</span> SYNC LOGS
+                    </button>
+                </div>
+            </section>
+
+            <!-- Right Column: Telemetry, Goals & Logs -->
+            <div class="side-column">
+                <!-- Goal & Planning Status Card -->
+                <section class="card goal-card">
+                    <div class="card-header">
+                        <div class="card-title">🎯 HIERARCHICAL REASONING & STRATEGY</div>
+                        <span class="badge badge-cyan" id="goalTypeBadge">EXPLORE</span>
+                    </div>
+                    <div class="goal-box">
+                        <div class="goal-label">ACTIVE SUBGOAL & STRATEGY:</div>
+                        <div class="goal-text" id="goalText">Waiting for bot activation...</div>
+                    </div>
+
+                    <div class="goal-tree">
+                        <div class="tree-item active">
+                            <span class="tree-dot cyan"></span>
+                            <span class="tree-title" id="treeMainGoal">1. Main Goal: Complete Chamber 00</span>
+                        </div>
+                        <div class="tree-item sub active">
+                            <span class="tree-line"></span>
+                            <span class="tree-dot orange"></span>
+                            <span class="tree-title" id="treeSubgoal">Decomposing puzzle requirements...</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Chamber State Telemetry Card -->
+                <section class="card telemetry-card">
+                    <div class="card-header">
+                        <div class="card-title">📊 GROUND-TRUTH TELEMETRY</div>
+                    </div>
+                    <div class="telemetry-grid">
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">GUN INVENTORY</div>
+                            <div class="telemetry-val" id="teleGunState">NO GUN</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">HELD OBJECT</div>
+                            <div class="telemetry-val" id="teleHand">NONE</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">BLUE PORTAL</div>
+                            <div class="telemetry-val" id="teleBluePortal">INACTIVE</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">ORANGE PORTAL</div>
+                            <div class="telemetry-val" id="teleOrangePortal">INACTIVE</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">FLOOR BUTTON</div>
+                            <div class="telemetry-val" id="teleButton">UNPRESSED</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">EXIT DOOR</div>
+                            <div class="telemetry-val" id="teleDoor">CLOSED</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Real-time Event Logs -->
+                <section class="card log-card">
+                    <div class="card-header">
+                        <div class="card-title">📜 LIVE AGENT LOGS</div>
+                        <button class="btn-clear" id="btnClearLogs">Clear</button>
+                    </div>
+                    <div class="log-stream" id="logStream">
+                        <div class="log-row info"><span class="log-time">[00:00:00]</span> Portal-BOT Control Center v2.0 initialized.</div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
