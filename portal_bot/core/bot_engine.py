@@ -19,6 +19,7 @@ from portal_bot.core.types import (
     ActionType,
     BotStatus,
     GameState,
+    GoalType,
 )
 from portal_bot.engine_bridge.console_reader import ConsoleLogReader
 from portal_bot.engine_bridge.game_fusion import StateFusion
@@ -231,6 +232,15 @@ class BotEngine:
                 last_action = action_cmd
                 last_result = result
                 self.world_model.action_memory.record_action(action_cmd, result)
+
+                # State transition handling on cube interaction
+                if action_cmd.action_type == ActionType.USE_INTERACT:
+                    if self.agent.current_goal and self.agent.current_goal.goal_type == GoalType.OBTAIN_CUBE:
+                        self.vision.holding_cube_state = True
+                    elif self.agent.current_goal and self.agent.current_goal.goal_type == GoalType.CARRY_CUBE_TO_BUTTON:
+                        self.vision.holding_cube_state = False
+                        self.agent.cube_strategy.reset()
+                        self.agent.button_strategy.reset()
             else:
                 self.set_status(BotStatus.RUNNING)
 

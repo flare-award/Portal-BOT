@@ -99,26 +99,29 @@ class VisionPipeline:
             obj.center_screen = (obj.bbox.cx, obj.bbox.cy)
 
         # 6. Held Cube & Player State Analysis
-        # A held cube in Portal 1 occupies a massive central-lower view (0.24*w <= x <= 0.76*w, y >= 0.42*h)
-        center_hand_roi = small_frame[int(proc_h * 0.42):, int(proc_w * 0.24):int(proc_w * 0.76)]
-        is_holding_cube = False
-        if center_hand_roi.size > 0:
-            hsv_center = cv2.cvtColor(center_hand_roi, cv2.COLOR_BGR2HSV)
-            
-            # Aperture logo cyan ring mask
-            mask_center_cube = cv2.inRange(
-                hsv_center,
-                np.array(self.config.cube_ring_hsv_lower),
-                np.array(self.config.cube_ring_hsv_upper)
-            )
-            cube_ring_pixels = int(np.count_nonzero(mask_center_cube))
+        # Check if weapon viewmodel is present in bottom-right corner
+        weapon_roi = small_frame[int(proc_h * 0.55):, int(proc_w * 0.65):]
+        hsv_weapon = cv2.cvtColor(weapon_roi, cv2.COLOR_BGR2HSV)
+        mask_weapon_blue = cv2.inRange(hsv_weapon, np.array((85, 120, 140)), np.array((125, 255, 255)))
+        mask_weapon_orange = cv2.inRange(hsv_weapon, np.array((6, 120, 140)), np.array((25, 255, 255)))
+        has_weapon_viewmodel = bool((np.count_nonzero(mask_weapon_blue) > 40) or (np.count_nonzero(mask_weapon_orange) > 40))
 
-            # Must have substantial Aperture cyan emblem pixels (> 70px) in hand ROI
-            if cube_ring_pixels > 70:
-                is_holding_cube = True
-                self.holding_cube_state = True
-            else:
-                self.holding_cube_state = False
+        if has_weapon_viewmodel:
+            # Player is holding the Portal Gun -> cannot be holding a cube
+            self.holding_cube_state = False
+        else:
+            # Check center hand area for massive held cube
+            center_hand_roi = small_frame[int(proc_h * 0.40):int(proc_h * 0.85), int(proc_w * 0.35):int(proc_w * 0.65)]
+            if center_hand_roi.size > 0:
+                hsv_center = cv2.cvtColor(center_hand_roi, cv2.COLOR_BGR2HSV)
+                mask_center_cube = cv2.inRange(
+                    hsv_center,
+                    np.array(self.config.cube_ring_hsv_lower),
+                    np.array(self.config.cube_ring_hsv_upper)
+                )
+                cube_ring_pixels = int(np.count_nonzero(mask_center_cube))
+                if cube_ring_pixels > 80:
+                    self.holding_cube_state = True
 
         # Filter out held-cube artifacts from 3D world interactive object list
         filtered_interactive: List[DetectedObject] = []
@@ -126,9 +129,8 @@ class VisionPipeline:
         has_open_door = False
 
         for obj in interactive_objects:
-            if obj.object_type == ObjectType.CUBE and obj.bbox.cy > orig_h * 0.52 and (orig_w * 0.22 < obj.bbox.cx < orig_w * 0.78) and obj.bbox.area > 20000:
-                is_holding_cube = True
-                self.holding_cube_state = True
+            if obj.object_type == ObjectType.CUBE and self.holding_cube_state and obj.bbox.cy > orig_h * 0.52 and (orig_w * 0.30 < obj.bbox.cx < orig_w * 0.70) and obj.bbox.area > 20000:
+                pass
             else:
                 filtered_interactive.append(obj)
 
