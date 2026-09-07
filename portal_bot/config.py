@@ -58,8 +58,8 @@ class VisionConfig:
     acid_hsv_lower: Tuple[int, int, int] = (30, 70, 40)
     acid_hsv_upper: Tuple[int, int, int] = (75, 255, 180)
 
-    portalable_min_brightness: int = 145
-    portalable_max_saturation: int = 55
+    portalable_min_brightness: int = 75
+    portalable_max_saturation: int = 65
 
     optical_flow_points: int = 100
     optical_flow_min_distance: int = 7

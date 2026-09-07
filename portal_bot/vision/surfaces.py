@@ -41,29 +41,34 @@ class SurfaceAnalyzer:
                 ))
 
         # 2. Portalable Surface Segmentation Mask
-        # Portalable concrete has high Value (V >= 140) and low Saturation (S <= 60)
+        # Portalable concrete has Value (V >= 75) and low Saturation (S <= 65)
         v_channel = hsv[:, :, 2]
         s_channel = hsv[:, :, 1]
         
         portalable_mask = np.zeros((h, w), dtype=np.uint8)
+        # Concrete walls: grey/white with low saturation
         portalable_mask[(v_channel >= self.config.portalable_min_brightness) & (s_channel <= self.config.portalable_max_saturation)] = 255
         
         # Exclude HUD / top-left signage from surface mask
-        portalable_mask[:int(h * 0.15), :int(w * 0.2)] = 0
+        portalable_mask[:int(h * 0.12), :int(w * 0.22)] = 0
         
+        # Morphological close to bridge tile seams
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        cleaned_mask = cv2.morphologyEx(portalable_mask, cv2.MORPH_CLOSE, kernel)
+
         # Find large contiguous portalable wall patches
-        wall_contours, _ = cv2.findContours(portalable_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        wall_contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in wall_contours:
             area = cv2.contourArea(cnt)
-            if area > 4000:
+            if area > 2500:
                 x, y, cw, ch = cv2.boundingRect(cnt)
-                # Ensure it's in the mid-screen wall elevation
-                if y < h * 0.85 and (y + ch) > h * 0.2:
+                # Wall elevation: spans vertically across mid-screen
+                if y < h * 0.85 and (y + ch) > h * 0.20 and cw > 25 and ch > 25:
                     bbox = BoundingBox(x=x, y=y, w=cw, h=ch)
                     detected_objects.append(DetectedObject(
                         object_type=ObjectType.PORTALABLE_WALL,
                         bbox=bbox,
-                        confidence=min(1.0, area / 20000.0),
+                        confidence=min(1.0, area / 15000.0),
                         attributes={"area": area}
                     ))
 
@@ -75,15 +80,13 @@ class SurfaceAnalyzer:
         for placing a blue or orange portal.
         """
         h, w = frame.shape[:2]
-        
-        # Filter regions based on requested side (e.g. left wall vs right wall vs center)
         mask = portalable_mask.copy()
+        
         if target_side == "left":
-            mask[:, int(w * 0.6):] = 0
+            mask[:, int(w * 0.55):] = 0
         elif target_side == "right":
-            mask[:, :int(w * 0.4)] = 0
+            mask[:, :int(w * 0.45)] = 0
 
-        # Morphological clean up to avoid isolated noise pixels
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
@@ -91,9 +94,8 @@ class SurfaceAnalyzer:
         if not contours:
             return None
 
-        # Pick largest contour
         largest = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest) < 1500:
+        if cv2.contourArea(largest) < 1200:
             return None
 
         M = cv2.moments(largest)

@@ -88,7 +88,22 @@ class HierarchicalPlanner:
             ))
             return subgoals
 
-        # 5. Default: Systematic Horizontal Exploration
+        # 5. Portal placement when Portal Gun is equipped
+        if state.player.gun_state != PortalGunState.NO_GUN:
+            need_blue = not state.portals.blue_active
+            need_orange = (state.player.gun_state == PortalGunState.DUAL_PORTAL) and (not state.portals.orange_active)
+
+            # Check if there is portalable wall in view
+            has_portal_wall = any(obj.object_type == ObjectType.PORTALABLE_WALL for obj in state.objects)
+            if (need_blue or need_orange) and (has_portal_wall or state.current_chamber >= 2):
+                subgoals.append(SubGoal(
+                    id=self._next_goal_id(GoalType.PLACE_PORTAL_PAIR),
+                    goal_type=GoalType.PLACE_PORTAL_PAIR,
+                    reason=f"Place required portals (Gun: {state.player.gun_state.value})"
+                ))
+                return subgoals
+
+        # 6. Default: Systematic Horizontal Exploration
         subgoals.append(SubGoal(
             id=self._next_goal_id(GoalType.EXPLORE_SURROUNDINGS),
             goal_type=GoalType.EXPLORE_SURROUNDINGS,
