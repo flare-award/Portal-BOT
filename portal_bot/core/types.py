@@ -152,7 +152,7 @@ class PlayerState:
     is_dead: bool = False
     holding_cube: bool = False
     crosshair: CrosshairState = field(default_factory=CrosshairState)
-    gun_state: PortalGunState = PortalGunState.DUAL_PORTAL
+    gun_state: PortalGunState = PortalGunState.NO_GUN
     last_motion_time: float = field(default_factory=time.time)
 
 

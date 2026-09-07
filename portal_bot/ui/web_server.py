@@ -13,6 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+import numpy as np
 
 from portal_bot.config import BotConfig, DEFAULT_CONFIG
 from portal_bot.core.bot_engine import BotEngine
@@ -106,28 +107,33 @@ def create_app(engine: BotEngine) -> FastAPI:
         return {"logs": bot_log.get_recent_logs(limit)}
 
     def generate_video_stream():
-        """Fast MJPEG stream from debug frames with turbo encoding."""
-        target_delay = 1.0 / max(10, engine.config.ui.stream_fps)
+        """Fast MJPEG stream from debug frames with live preview support."""
+        target_fps = max(10, engine.config.ui.stream_fps)
+        target_delay = 1.0 / target_fps
+
         while True:
             t0 = time.time()
-            debug_frame = engine.get_debug_frame()
-            if debug_frame is None:
-                debug_frame = np.zeros((360, 640, 3), dtype=np.uint8)
-                cv2.putText(
-                    debug_frame, "NO SIGNAL / BOT IDLE", (180, 180),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 100, 100), 2
-                )
+            try:
+                debug_frame = engine.get_debug_frame()
+                if debug_frame is None:
+                    debug_frame = np.zeros((360, 640, 3), dtype=np.uint8)
+                    cv2.putText(
+                        debug_frame, "APERTURE VISION: WAITING FOR SIGNAL", (110, 180),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 210, 255), 2
+                    )
 
-            ret, buffer = cv2.imencode('.jpg', debug_frame, [cv2.IMWRITE_JPEG_QUALITY, engine.config.ui.jpeg_quality])
-            if ret:
-                frame_bytes = buffer.tobytes()
-                yield (
-                    b'--frame\r\n'
-                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n'
-                )
-            
+                ret, buffer = cv2.imencode('.jpg', debug_frame, [cv2.IMWRITE_JPEG_QUALITY, engine.config.ui.jpeg_quality])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (
+                        b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n'
+                    )
+            except Exception as e:
+                logger.debug(f"Video stream frame error: {e}")
+
             elapsed = time.time() - t0
-            time.sleep(max(0.001, target_delay - elapsed))
+            time.sleep(max(0.005, target_delay - elapsed))
 
     @app.get("/video_feed")
     def video_feed():

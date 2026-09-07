@@ -15,9 +15,9 @@ from portal_bot.utils.logger import bot_log
 class ChamberExplorationStrategy:
     """
     Executes smooth, systematic room exploration:
-    1. 4 discrete 90-degree quadrant checks
+    1. 4 discrete 90-degree quadrant checks at horizontal eye level
     2. Smooth relocation forward into open room space
-    3. Re-evaluation from new vantage point with level camera pitch
+    3. Re-evaluation from new vantage point
     """
 
     def __init__(self):
@@ -33,12 +33,6 @@ class ChamberExplorationStrategy:
     def execute(self, state: GameState, frame_size: Tuple[int, int]) -> List[ActionCommand]:
         actions: List[ActionCommand] = []
 
-        # Ensure camera pitch is level before sweeping
-        if abs(state.player.pitch) > 15.0:
-            dy_correct = int(-state.player.pitch * 0.8)
-            actions.append(rotate_camera(mouse_dx=0, mouse_dy=dy_correct, reason="Level camera pitch"))
-            return actions
-
         if self.scans_at_current_spot < 4:
             self.scans_at_current_spot += 1
             self.quadrant = (self.quadrant + 1) % 4
@@ -49,7 +43,7 @@ class ChamberExplorationStrategy:
             bot_log.action("Full sweep complete: Relocating forward to new chamber vantage point")
             self.scans_at_current_spot = 0
             
-            # Walk forward smoothly to new position (no jumping)
+            # Walk forward smoothly to new position (no jumping, level pitch)
             actions.append(move_forward(0.60, reason="Advance to new vantage point"))
             actions.append(wait(0.15))
 

@@ -9,7 +9,8 @@ import numpy as np
 class HUDAnalyzer:
     """Analyzes HUD elements, signs, death screens, and level transition triggers."""
 
-    def __init__(self):
+    def __init__(self, config=None):
+        self.config = config
         self.last_chamber_id: int = 0
 
     def check_death_screen(self, frame: np.ndarray) -> bool:

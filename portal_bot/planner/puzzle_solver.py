@@ -103,7 +103,7 @@ class DecisionAgent:
                     return first
             else:
                 self.cube_strategy.reset()
-                return rotate_camera(mouse_dx=80, reason="Scan room to find cube")
+                return rotate_camera(mouse_dx=80, mouse_dy=0, reason="Scan room to find cube")
 
         elif active_goal.goal_type == GoalType.PLACE_PORTAL_PAIR:
             plan = self.portal_strategy.plan_portals(state, self.frame_size)
@@ -123,14 +123,9 @@ class DecisionAgent:
         return wait(0.05, reason="Awaiting state update")
 
     def _plan_reach_exit(self, state: GameState, goal: SubGoal) -> ActionCommand:
-        """Navigates towards the open exit door with pitch stabilization."""
+        """Navigates towards the open exit door with purely horizontal steering."""
         w, h = self.frame_size
         door_obj = self.world_model.get_exit_door()
-        
-        # Level camera pitch if looking too low/high
-        if abs(state.player.pitch) > 15.0:
-            dy_correct = int(-state.player.pitch * 0.8)
-            return rotate_camera(mouse_dx=0, mouse_dy=dy_correct, reason="Level camera pitch")
 
         if door_obj:
             tx, ty = door_obj.screen_pos
@@ -143,4 +138,4 @@ class DecisionAgent:
                 bot_log.action("Moving forward toward Exit Door")
                 return move_forward(0.4, reason="Walk to exit door")
         else:
-            return rotate_camera(mouse_dx=80, reason="Search for exit door")
+            return rotate_camera(mouse_dx=80, mouse_dy=0, reason="Search for exit door")

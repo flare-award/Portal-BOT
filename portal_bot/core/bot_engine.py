@@ -130,7 +130,20 @@ class BotEngine:
         with self.state_lock:
             if self.latest_debug_frame is not None:
                 return self.latest_debug_frame.copy()
-            return None
+        
+        # Fallback for live preview when engine is idle/stopped
+        try:
+            frame = self.capture.capture_frame()
+            if frame is not None:
+                state, debug = self.vision.process_frame(frame, self.latest_state)
+                with self.state_lock:
+                    self.latest_state = state
+                    self.latest_debug_frame = debug
+                return debug
+        except Exception:
+            pass
+
+        return None
 
     def _vision_loop(self):
         """High-FPS 60+ visual perception loop."""
@@ -199,32 +212,28 @@ class BotEngine:
                 self.set_status(BotStatus.STUCK_RECOVERING)
                 recovery_plan = self.stuck_detector.generate_recovery_plan()
                 for rec_cmd in recovery_plan:
-                    if not self._running or self._paused:
-                        break
-                    res = self.closed_loop.execute_action(rec_cmd, lambda: self.get_state_snapshot() or state)
-                    time.sleep(0.02)
+                    self.closed_loop.execute_action(rec_cmd, lambda: self.get_state_snapshot() or state)
+                self.stuck_detector.reset()
                 self.set_status(BotStatus.RUNNING)
-                last_action = None
                 continue
 
-            # 3. Check Chamber Complete
-            if state.level_complete:
-                self.set_status(BotStatus.LEVEL_COMPLETE)
-
-            # 4. Decision Making (OBSERVE -> THINK -> PLAN -> ACT)
+            # 3. Formulate next Action via Hierarchical Decision Agent
+            t0 = time.time()
             action_cmd = self.agent.decide_next_action(state, last_action, last_result)
 
-            # 5. Execute Action with closed loop feedback
-            result = self.closed_loop.execute_action(
-                action_cmd,
-                get_current_state=lambda: self.get_state_snapshot() or state,
-                frame_size=(self.config.capture.width, self.config.capture.height)
-            )
+            if action_cmd:
+                self.set_status(BotStatus.SOLVING_PUZZLE)
+                result = self.closed_loop.execute_action(
+                    action_cmd,
+                    get_current_state=lambda: self.get_state_snapshot() or state,
+                    frame_size=(self.config.capture.width, self.config.capture.height)
+                )
+                last_action = action_cmd
+                last_result = result
+                self.world_model.action_memory.record_action(action_cmd, result)
+            else:
+                self.set_status(BotStatus.RUNNING)
 
-            # 6. Record Experience into Memory
-            self.world_model.action_memory.record_action(action_cmd, result)
-
-            last_action = action_cmd
-            last_result = result
-
-            time.sleep(planning_interval)
+            elapsed = time.time() - t0
+            sleep_time = max(0.005, planning_interval - elapsed)
+            time.sleep(sleep_time)

@@ -31,7 +31,7 @@ class HierarchicalPlanner:
         """
         subgoals: List[SubGoal] = []
 
-        # 1. Chamber Completed -> Walk into elevator/exit
+        # 1. Chamber Completed -> Walk forward through exit elevator
         if state.level_complete:
             bot_log.goal("Chamber completed! Advancing to next chamber...")
             subgoals.append(SubGoal(
@@ -88,20 +88,7 @@ class HierarchicalPlanner:
             ))
             return subgoals
 
-        # 5. Portals required (Only if player has portal gun!)
-        if state.player.gun_state != PortalGunState.NO_GUN:
-            need_blue = not state.portals.blue_active
-            need_orange = (state.player.gun_state == PortalGunState.DUAL_PORTAL) and (not state.portals.orange_active)
-
-            if need_blue or need_orange:
-                subgoals.append(SubGoal(
-                    id=self._next_goal_id(GoalType.PLACE_PORTAL_PAIR),
-                    goal_type=GoalType.PLACE_PORTAL_PAIR,
-                    reason=f"Place required portals (Gun: {state.player.gun_state.value})"
-                ))
-                return subgoals
-
-        # 6. Default: Systematic Exploration
+        # 5. Default: Systematic Exploration
         subgoals.append(SubGoal(
             id=self._next_goal_id(GoalType.EXPLORE_SURROUNDINGS),
             goal_type=GoalType.EXPLORE_SURROUNDINGS,

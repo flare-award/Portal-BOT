@@ -167,7 +167,7 @@ class ConsoleLogReader:
             chamber_id = self.CHAMBER_MAPS.get(map_name, 0)
             self.state.current_chamber = chamber_id
             
-            # Reset placement flags on new chamber load
+            # Reset transient chamber flags
             self.state.blue_portal_placed = False
             self.state.orange_portal_placed = False
             self.state.door_open = False
@@ -178,13 +178,18 @@ class ConsoleLogReader:
 
             if chamber_id in [0, 1]:
                 self.state.gun_state = PortalGunState.NO_GUN
+            elif chamber_id >= 11:
+                self.state.gun_state = PortalGunState.DUAL_PORTAL
+            # For chambers 2-10, retain DUAL_PORTAL if already held, otherwise default to SINGLE
+            elif self.state.gun_state != PortalGunState.DUAL_PORTAL:
+                self.state.gun_state = PortalGunState.SINGLE_PORTAL_BLUE
             
             bot_log.state(f"Chamber loaded: 0{chamber_id} ({map_name})")
             event_bus.publish("chamber_changed", chamber_id)
 
         # 2. Weapon & Portal Gun Pickups
         if "weapon_portalgun" in line.lower() or "picked up portal gun" in line.lower() or "give_portalgun" in line.lower():
-            if "dual" in line.lower() or "both" in line.lower():
+            if "dual" in line.lower() or "both" in line.lower() or "upgrade" in line.lower():
                 self.state.gun_state = PortalGunState.DUAL_PORTAL
             else:
                 self.state.gun_state = PortalGunState.SINGLE_PORTAL_BLUE
@@ -205,7 +210,7 @@ class ConsoleLogReader:
             bot_log.vision("Game Engine Event: Portals Cleared / Fizzled")
 
         # 4. Button & Cube Triggers
-        if "button" in line.lower() and ("pressed" in line.lower() or "activated" in line.lower() or "down" in line.lower()):
+        if "button" in line.lower() and ("pressed" in line.lower() or "activated" in line.lower() or "down" in line.lower() or "trigger" in line.lower()):
             self.state.button_pressed = True
             bot_log.state("Game Engine Event: Floor Button Pressed")
 

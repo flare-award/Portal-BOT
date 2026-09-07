@@ -9,7 +9,10 @@ from portal_bot.config import VisionConfig
 
 
 class VisualOdometry:
-    """Estimates camera rotation (yaw/pitch) and linear motion from screen optical flow."""
+    """
+    Estimates horizontal camera rotation (yaw) and linear motion magnitude
+    from screen optical flow without dead-reckoning vertical pitch drift.
+    """
 
     def __init__(self, config: VisionConfig):
         self.config = config
@@ -71,13 +74,14 @@ class VisualOdometry:
                         flow_dy = med_dy
                         mag = math.hypot(flow_dx, flow_dy)
 
-                        # Update estimated camera yaw and pitch
+                        # Update estimated camera yaw (horizontal rotation)
                         # Moving scene right => camera turned left
                         yaw_step = - (flow_dx / float(w)) * 90.0
-                        pitch_step = - (flow_dy / float(h)) * 60.0
-                        
                         self.estimated_yaw += yaw_step
-                        self.estimated_pitch = max(-89.0, min(89.0, self.estimated_pitch + pitch_step))
+                        
+                        # Pitch is kept stable at 0.0 to prevent runaway dead-reckoning drift
+                        # Pitch adjustments are handled strictly via closed-loop visual aiming on targets
+                        self.estimated_pitch = 0.0
 
                         self.prev_points = good_next.reshape(-1, 1, 2)
                     else:

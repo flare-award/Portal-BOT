@@ -79,20 +79,13 @@ class WindowFinder:
 
 
 class ScreenCapture:
-    """Threaded high-performance screen capture manager with headless fallback."""
+    """Threaded high-performance screen capture manager with thread-safe mss lifecycle."""
 
     def __init__(self, config: CaptureConfig):
         self.config = config
-        self.sct = None
-        if mss:
-            try:
-                self.sct = mss.mss()
-            except Exception as e:
-                logger.warning(f"mss screen capture unavailable (headless or missing X11 display): {e}")
-                self.sct = None
-
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        self._local = threading.local()
         
         self.current_frame: Optional[np.ndarray] = None
         self.frame_lock = threading.Lock()
@@ -104,6 +97,17 @@ class ScreenCapture:
         self.window_region: Optional[Dict[str, int]] = None
         self.window_found = False
 
+    def _get_sct(self):
+        if not mss:
+            return None
+        if not hasattr(self._local, "sct") or self._local.sct is None:
+            try:
+                self._local.sct = mss.mss()
+            except Exception as e:
+                logger.warning(f"mss instantiation error on thread: {e}")
+                self._local.sct = None
+        return self._local.sct
+
     def find_window(self) -> bool:
         region = WindowFinder.find_portal_window(self.config.window_title_patterns)
         if region:
@@ -113,9 +117,10 @@ class ScreenCapture:
             return True
         else:
             self.window_found = False
-            if self.sct and self.sct.monitors:
+            sct = self._get_sct()
+            if sct and sct.monitors:
                 try:
-                    primary = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
+                    primary = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
                     self.window_region = {
                         "left": primary["left"],
                         "top": primary["top"],
@@ -128,12 +133,13 @@ class ScreenCapture:
 
     def capture_frame(self) -> Optional[np.ndarray]:
         """Captures a single frame synchronously (BGR numpy array)."""
-        if not self.sct:
-            # Headless fallback: generate blank frame with status text
+        sct = self._get_sct()
+        if not sct:
+            # Headless / preview fallback
             blank = np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
             cv2.putText(
-                blank, "PORTAL 1 WINDOW NOT CONNECTED / HEADLESS", (int(self.config.width * 0.18), int(self.config.height * 0.5)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (120, 120, 120), 2
+                blank, "PORTAL 1 DISPLAY FEED / WAITING FOR WINDOW", (int(self.config.width * 0.15), int(self.config.height * 0.5)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (120, 120, 120), 2
             )
             return blank
 
@@ -148,7 +154,7 @@ class ScreenCapture:
                 "height": self.window_region["height"] if self.window_region else self.config.height,
             }
 
-            sct_img = self.sct.grab(monitor)
+            sct_img = sct.grab(monitor)
             frame_bgra = np.array(sct_img)
             frame_bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
 
@@ -169,7 +175,7 @@ class ScreenCapture:
             return frame_bgr
 
         except Exception as e:
-            logger.error(f"Frame capture error: {e}")
+            logger.debug(f"Frame capture error: {e}")
             return None
 
     def start(self):

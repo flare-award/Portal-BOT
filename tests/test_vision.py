@@ -31,6 +31,50 @@ def test_crosshair_analyzer(test_frame):
     assert isinstance(gun_state, PortalGunState)
 
 
+def test_crosshair_dual_gun_and_glow_detection():
+    config = VisionConfig()
+    analyzer = CrosshairAnalyzer(config)
+
+    # 1. Synthetic 1080p frame with Dual Portal Gun (both brackets glowing)
+    frame = np.full((1080, 1920, 3), 40, dtype=np.uint8)
+    cx, cy = 1920 // 2, 1080 // 2
+
+    # Draw left blue bracket
+    cv2.ellipse(frame, (cx - 24, cy), (10, 22), 0, 90, 270, (255, 200, 0), 3)
+    # Draw right orange bracket
+    cv2.ellipse(frame, (cx + 24, cy), (10, 22), 0, -90, 90, (0, 160, 255), 3)
+
+    state, gun_state = analyzer.analyze(frame)
+    assert gun_state == PortalGunState.DUAL_PORTAL
+    assert state.blue_ring_filled is True
+    assert state.orange_ring_filled is True
+
+    # 2. Frame with NO brackets
+    frame_empty = np.full((1080, 1920, 3), 40, dtype=np.uint8)
+    state_empty, gun_state_empty = analyzer.analyze(frame_empty)
+    assert gun_state_empty == PortalGunState.NO_GUN
+    assert state_empty.blue_ring_filled is False
+    assert state_empty.orange_ring_filled is False
+
+
+def test_cube_detector_rejects_ceiling_noise():
+    config = VisionConfig()
+    detector = ObjectDetector(config)
+
+    # Frame with ceiling lights and tiny wall noise
+    frame = np.full((360, 640, 3), 50, dtype=np.uint8)
+    
+    # Tiny speck (10x10 px) on ceiling
+    cv2.circle(frame, (320, 30), 5, (255, 255, 0), -1)
+    
+    # Blue light on ceiling
+    cv2.rectangle(frame, (100, 10), (140, 30), (255, 200, 0), -1)
+
+    detected = detector.detect_all(frame)
+    cubes = [d for d in detected if d.object_type == ObjectType.CUBE]
+    assert len(cubes) == 0, "Ceiling lights/noise must not be classified as cubes"
+
+
 def test_portal_detector(test_frame):
     config = VisionConfig()
     detector = PortalDetector(config)
@@ -70,6 +114,7 @@ def test_visual_odometry(test_frame):
     shifted_frame = np.roll(test_frame, 15, axis=1)
     dx2, dy2, mag2 = odom.update(shifted_frame)
     assert isinstance(mag2, float)
+    assert odom.estimated_pitch == 0.0, "Pitch should remain stable at 0.0 without runaway drift"
 
 
 def test_vision_pipeline_full_integration(test_frame):

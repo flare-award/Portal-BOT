@@ -2,6 +2,7 @@
 
 document.addEventListener('DOMContentLoaded', () => {
     // UI Element References
+    const videoFeed = document.getElementById('videoFeed');
     const botStatusPill = document.getElementById('botStatusPill');
     const statusDot = document.getElementById('statusDot');
     const botStatusText = document.getElementById('botStatusText');
@@ -39,6 +40,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let isRunning = false;
     let isPaused = false;
+
+    // Auto-reconnect video feed if dropped
+    if (videoFeed) {
+        videoFeed.onerror = () => {
+            setTimeout(() => {
+                videoFeed.src = `/video_feed?t=${Date.now()}`;
+            }, 1000);
+        };
+    }
 
     async function apiPost(endpoint) {
         try {

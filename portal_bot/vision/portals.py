@@ -9,7 +9,7 @@ from portal_bot.core.types import BoundingBox, DetectedObject, ObjectType, Porta
 
 
 class PortalDetector:
-    """Detects active blue and orange portals in the scene."""
+    """Detects active blue and orange portal ellipses in the 3D scene."""
 
     def __init__(self, config: VisionConfig):
         self.config = config
@@ -32,15 +32,15 @@ class PortalDetector:
 
         blue_contours, _ = cv2.findContours(mask_blue, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if blue_contours:
-            # Filter contours by aspect ratio (portals are elliptical, height usually >= width)
             valid_blue = []
             for cnt in blue_contours:
                 area = cv2.contourArea(cnt)
-                if area > 180:
+                # Significant elliptical area
+                if area > 220:
                     x, y, cw, ch = cv2.boundingRect(cnt)
                     aspect = ch / max(1.0, float(cw))
-                    # Portals usually have aspect ratio between 0.8 and 4.0
-                    if 0.6 <= aspect <= 5.0:
+                    # In Portal 1, portals are vertical ellipses (aspect ratio 0.9 to 4.0)
+                    if 0.85 <= aspect <= 4.2 and ch > 20 and cw > 10:
                         valid_blue.append((cnt, area, (x, y, cw, ch)))
 
             if valid_blue:
@@ -53,7 +53,7 @@ class PortalDetector:
                 detected_objects.append(DetectedObject(
                     object_type=ObjectType.PORTAL_BLUE,
                     bbox=bbox,
-                    confidence=min(1.0, best_area / 3000.0),
+                    confidence=min(1.0, best_area / 2500.0),
                     attributes={"portal_type": "blue", "aspect_ratio": bh / max(1.0, float(bw))}
                 ))
 
@@ -70,10 +70,10 @@ class PortalDetector:
             valid_orange = []
             for cnt in orange_contours:
                 area = cv2.contourArea(cnt)
-                if area > 180:
+                if area > 220:
                     x, y, cw, ch = cv2.boundingRect(cnt)
                     aspect = ch / max(1.0, float(cw))
-                    if 0.6 <= aspect <= 5.0:
+                    if 0.85 <= aspect <= 4.2 and ch > 20 and cw > 10:
                         valid_orange.append((cnt, area, (x, y, cw, ch)))
 
             if valid_orange:
@@ -86,7 +86,7 @@ class PortalDetector:
                 detected_objects.append(DetectedObject(
                     object_type=ObjectType.PORTAL_ORANGE,
                     bbox=bbox,
-                    confidence=min(1.0, best_area / 3000.0),
+                    confidence=min(1.0, best_area / 2500.0),
                     attributes={"portal_type": "orange", "aspect_ratio": oh / max(1.0, float(ow))}
                 ))
 

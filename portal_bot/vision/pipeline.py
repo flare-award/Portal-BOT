@@ -1,7 +1,7 @@
-"""High-Performance 60+ FPS Computer Vision Pipeline for Portal-BOT."""
+"""Master Computer Vision Pipeline for Portal-BOT operating at 60+ FPS."""
 
 import time
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
@@ -25,16 +25,22 @@ from portal_bot.vision.surfaces import SurfaceAnalyzer
 
 
 class VisionPipeline:
-    """Ultra-fast optimized Computer Vision pipeline delivering 60+ FPS."""
+    """
+    High-Performance Vision Pipeline:
+    - Downscaled 640x360 multi-cue perception
+    - Native High-Res Crosshair & Portal Reticle analysis
+    - Precision Cube / Button / Door segmentation
+    - Real-time debug visualization overlay
+    """
 
     def __init__(self, config: VisionConfig):
         self.config = config
+        self.odometry = VisualOdometry(config)
         self.crosshair_analyzer = CrosshairAnalyzer(config)
         self.surface_analyzer = SurfaceAnalyzer(config)
         self.portal_detector = PortalDetector(config)
         self.object_detector = ObjectDetector(config)
-        self.odometry = VisualOdometry(config)
-        self.hud_analyzer = HUDAnalyzer()
+        self.hud_analyzer = HUDAnalyzer(config)
 
         self.frame_count = 0
         self.last_time = time.time()
@@ -46,7 +52,7 @@ class VisionPipeline:
         self.frame_count += 1
         orig_h, orig_w = frame.shape[:2]
 
-        # Fast downscale to 640x360 for high-FPS vector processing
+        # Fast downscale to 640x360 for high-FPS processing
         proc_w, proc_h = 640, 360
         scale_x = orig_w / float(proc_w)
         scale_y = orig_h / float(proc_h)
@@ -93,7 +99,7 @@ class VisionPipeline:
             portal_state.orange_bbox.h = int(portal_state.orange_bbox.h * scale_y)
             portal_state.orange_screen_pos = (portal_state.orange_bbox.cx, portal_state.orange_bbox.cy)
 
-        # 5. Interactive Object Detection
+        # 5. Interactive Object Detection (Cubes, Buttons, Doors)
         interactive_objects = self.object_detector.detect_all(small_frame)
         for obj in interactive_objects:
             obj.bbox.x = int(obj.bbox.x * scale_x)
@@ -102,140 +108,138 @@ class VisionPipeline:
             obj.bbox.h = int(obj.bbox.h * scale_y)
             obj.center_screen = (obj.bbox.cx, obj.bbox.cy)
 
-        # Check holding cube state:
-        # A held cube sits centrally in the player's hands (0.28*w <= x <= 0.72*w, y >= 0.45*h)
-        # It must NOT be the portal gun in the bottom-right corner!
-        center_hand_roi = small_frame[int(proc_h * 0.45):, int(proc_w * 0.28):int(proc_w * 0.72)]
+        # 6. Held Cube & Player State Analysis
+        # Check if cube is held in center view (0.22*w <= x <= 0.78*w, y >= 0.38*h)
+        center_hand_roi = small_frame[int(proc_h * 0.38):, int(proc_w * 0.22):int(proc_w * 0.78)]
         is_holding_cube = False
         if center_hand_roi.size > 0:
             hsv_center = cv2.cvtColor(center_hand_roi, cv2.COLOR_BGR2HSV)
+            gray_center = cv2.cvtColor(center_hand_roi, cv2.COLOR_BGR2GRAY)
+            
+            # Aperture logo cyan ring mask
             mask_center_cube = cv2.inRange(
                 hsv_center,
                 np.array(self.config.cube_ring_hsv_lower),
                 np.array(self.config.cube_ring_hsv_upper)
             )
-            # Must have substantial cyan/aperture logo mass in center
-            if np.count_nonzero(mask_center_cube) > 80:
+            
+            # Central edge mass (cube box chamfer lines)
+            edges_center = cv2.Canny(gray_center, 40, 120)
+            edge_density = float(np.count_nonzero(edges_center)) / float(center_hand_roi.shape[0] * center_hand_roi.shape[1])
+            cube_ring_pixels = int(np.count_nonzero(mask_center_cube))
+
+            if cube_ring_pixels > 40 or (edge_density > 0.08 and cube_ring_pixels > 15):
                 is_holding_cube = True
                 self.holding_cube_state = True
             else:
                 self.holding_cube_state = False
 
         # Filter out held-cube artifacts from 3D world interactive object list
-        filtered_interactive = []
+        filtered_interactive: List[DetectedObject] = []
+        has_pressed_button = False
+        has_open_door = False
+
         for obj in interactive_objects:
-            # Exclude large central held cube from world targets
-            if obj.object_type == ObjectType.CUBE and obj.bbox.cy > orig_h * 0.55 and (orig_w * 0.25 < obj.bbox.cx < orig_w * 0.75) and obj.bbox.area > 20000:
+            if obj.object_type == ObjectType.CUBE and obj.bbox.cy > orig_h * 0.50 and (orig_w * 0.22 < obj.bbox.cx < orig_w * 0.78) and obj.bbox.area > 15000:
                 is_holding_cube = True
                 self.holding_cube_state = True
             else:
                 filtered_interactive.append(obj)
 
+            if obj.object_type == ObjectType.BUTTON_FLOOR:
+                if obj.attributes.get("is_pressed", False):
+                    has_pressed_button = True
+
+            if obj.object_type == ObjectType.DOOR:
+                if obj.attributes.get("is_open", False):
+                    has_open_door = True
+
         all_objects = surface_objects + portal_objects + filtered_interactive
 
-        # 6. Check HUD flags
+        # 7. Check HUD flags
         death_detected = self.hud_analyzer.check_death_screen(small_frame)
         level_complete = self.hud_analyzer.check_level_complete(small_frame)
 
-        # 7. Player State
-        player = PlayerState(
-            pos=tuple(self.odometry.estimated_pos),  # type: ignore
-            yaw=self.odometry.estimated_yaw,
-            pitch=self.odometry.estimated_pitch,
-            is_moving=(flow_mag > 0.8),
-            is_dead=death_detected,
-            holding_cube=self.holding_cube_state,
-            crosshair=crosshair_state,
-            gun_state=gun_state
-        )
+        # 8. Portal Placement Status:
+        # Crosshair reticle brackets determine true placed status
+        portal_state.blue_active = crosshair_state.blue_ring_filled
+        portal_state.orange_active = crosshair_state.orange_ring_filled
 
-        exit_door_open = False
-        exit_door_visible = False
-        for obj in all_objects:
-            if obj.object_type == ObjectType.DOOR:
-                exit_door_visible = True
-                if obj.attributes.get("is_open", False):
-                    exit_door_open = True
-
-        button_pressed = False
-        for obj in all_objects:
-            if obj.object_type == ObjectType.BUTTON_FLOOR and obj.attributes.get("is_pressed", False):
-                button_pressed = True
-
-        hazard_ahead = any(obj.object_type == ObjectType.HAZARD_ACID for obj in all_objects)
-
-        now = time.time()
-        dt = now - self.last_time
-        if dt > 0:
-            inst_fps = 1.0 / dt
-            self.fps = 0.92 * self.fps + 0.08 * inst_fps
-        self.last_time = now
-
+        # 9. Build Comprehensive Game State
         game_state = GameState(
+            timestamp=t0,
             frame_id=self.frame_count,
-            timestamp=now,
-            player=player,
+            fps=self.fps,
+            player=PlayerState(
+                yaw=self.odometry.estimated_yaw,
+                pitch=0.0,
+                pos=(self.odometry.estimated_pos[0], self.odometry.estimated_pos[1], self.odometry.estimated_pos[2]),
+                gun_state=gun_state,
+                holding_cube=self.holding_cube_state,
+                crosshair=crosshair_state,
+            ),
             portals=portal_state,
             objects=all_objects,
-            exit_door_open=exit_door_open,
-            exit_door_visible=exit_door_visible,
-            button_pressed=button_pressed,
-            hazard_ahead=hazard_ahead,
-            level_complete=level_complete,
+            button_pressed=has_pressed_button,
+            exit_door_open=has_open_door,
             death_detected=death_detected,
-            optical_flow_dx=flow_dx,
-            optical_flow_dy=flow_dy,
+            level_complete=level_complete,
             optical_flow_magnitude=flow_mag,
-            fps=self.fps,
-            confidence=1.0
+            confidence=0.95
         )
 
-        debug_frame = self.draw_debug_overlay(frame, game_state)
+        # Calculate live FPS
+        elapsed = time.time() - t0
+        self.fps = 0.9 * self.fps + 0.1 * (1.0 / max(0.001, elapsed))
+
+        # Render Debug Overlay
+        debug_frame = self._render_debug_overlay(frame, game_state)
+
         return game_state, debug_frame
 
-    def draw_debug_overlay(self, frame: np.ndarray, state: GameState) -> np.ndarray:
-        debug = frame.copy()
-        h, w = debug.shape[:2]
+    def _render_debug_overlay(self, frame: np.ndarray, state: GameState) -> np.ndarray:
+        overlay = frame.copy()
+        h, w = overlay.shape[:2]
 
-        color_map = {
-            ObjectType.PORTAL_BLUE: (255, 180, 0),
-            ObjectType.PORTAL_ORANGE: (0, 140, 255),
-            ObjectType.CUBE: (255, 230, 0),
-            ObjectType.BUTTON_FLOOR: (30, 30, 240),
-            ObjectType.DOOR: (0, 255, 120),
-            ObjectType.HAZARD_ACID: (0, 120, 0),
-            ObjectType.TURRET: (0, 0, 255),
-            ObjectType.PORTALABLE_WALL: (200, 200, 200)
-        }
-
+        # Draw detected 3D Objects
         for obj in state.objects:
-            if obj.object_type == ObjectType.PORTALABLE_WALL:
-                continue
+            b = obj.bbox
+            color = (0, 255, 0)
+            label = obj.object_type.value
 
-            bx, by, bw, bh = obj.bbox.as_tuple()
-            color = color_map.get(obj.object_type, (200, 200, 200))
-            
-            cv2.rectangle(debug, (bx, by), (bx + bw, by + bh), color, 2)
-            
-            label = f"{obj.object_type.value} ({obj.confidence:.2f})"
-            if obj.object_type == ObjectType.DOOR:
-                label += " [OPEN]" if obj.attributes.get("is_open") else " [CLOSED]"
-            
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-            cv2.rectangle(debug, (bx, max(0, by - th - 6)), (bx + tw + 6, by), color, -1)
-            cv2.putText(debug, label, (bx + 3, max(12, by - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+            if obj.object_type == ObjectType.CUBE:
+                color = (255, 200, 0)
+                label = f"CUBE ({obj.confidence:.2f})"
+            elif obj.object_type == ObjectType.BUTTON_FLOOR:
+                is_p = obj.attributes.get("is_pressed", False)
+                color = (0, 255, 100) if is_p else (0, 0, 255)
+                label = f"BUTTON: {'PRESSED' if is_p else 'UNPRESSED'}"
+            elif obj.object_type == ObjectType.DOOR:
+                is_o = obj.attributes.get("is_open", False)
+                color = (0, 255, 255) if is_o else (128, 128, 128)
+                label = f"EXIT DOOR: {'OPEN' if is_o else 'CLOSED'}"
+            elif obj.object_type == ObjectType.PORTAL_BLUE:
+                color = (255, 180, 0)
+                label = "PORTAL (BLUE)"
+            elif obj.object_type == ObjectType.PORTAL_ORANGE:
+                color = (0, 140, 255)
+                label = "PORTAL (ORANGE)"
 
+            cv2.rectangle(overlay, (b.x, b.y), (b.x + b.w, b.y + b.h), color, 2)
+            cv2.putText(overlay, label, (b.x, max(15, b.y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+        # Draw Reticle Target
         cx, cy = w // 2, h // 2
         ch_state = state.player.crosshair
-        ch_col = (0, 255, 0) if ch_state.on_portalable_surface else (80, 80, 80)
-        cv2.circle(debug, (cx, cy), 4, ch_col, -1)
-        cv2.line(debug, (cx - 12, cy), (cx + 12, cy), ch_col, 1)
-        cv2.line(debug, (cx, cy - 12), (cx, cy + 12), ch_col, 1)
+        reticle_col = (0, 255, 0) if ch_state.on_portalable_surface else (0, 0, 255)
+        
+        cv2.circle(overlay, (cx, cy), 5, reticle_col, 1)
+        cv2.line(overlay, (cx - 12, cy), (cx + 12, cy), reticle_col, 1)
+        cv2.line(overlay, (cx, cy - 12), (cx, cy + 12), reticle_col, 1)
 
-        cv2.rectangle(debug, (0, 0), (w, 36), (20, 20, 25), -1)
-        gun_label = state.player.gun_state.value
-        held_str = "CUBE" if state.player.holding_cube else "NONE"
-        hud_text = f"FPS: {state.fps:.1f} | Gun: {gun_label} | Hand: {held_str} | Blue: {'ON' if state.portals.blue_active else 'OFF'} | Orange: {'ON' if state.portals.orange_active else 'OFF'} | Door: {'OPEN' if state.exit_door_open else 'CLOSED'}"
-        cv2.putText(debug, hud_text, (16, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
+        # HUD Status Bar at top
+        cv2.rectangle(overlay, (0, 0), (w, 36), (20, 20, 20), -1)
+        hud_str = f"FPS: {state.fps:.1f} | GUN: {state.player.gun_state.value.upper()} | BLUE: {'YES' if state.portals.blue_active else 'NO'} | ORANGE: {'YES' if state.portals.orange_active else 'NO'} | HAND: {'CUBE' if state.player.holding_cube else 'NONE'}"
+        cv2.putText(overlay, hud_str, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 220, 255), 1)
 
-        return debug
+        return overlay

@@ -10,7 +10,7 @@ from portal_bot.core.types import CrosshairState, PortalGunState
 
 class CrosshairAnalyzer:
     """
-    Analyzes the central screen reticle to determine:
+    Analyzes the central screen reticle across any screen resolution to determine:
     1. Portal Gun state: NO_GUN vs SINGLE_PORTAL_BLUE vs DUAL_PORTAL
     2. Active Portals: Blue placed / Orange placed
     3. Surface conductivity under reticle
@@ -26,88 +26,85 @@ class CrosshairAnalyzer:
         state = CrosshairState(center_pos=(cx, cy))
         gun_state = PortalGunState.NO_GUN
         
-        # Crop 48x48 pixel ROI centered on crosshair
-        roi_half = 24
+        # Adaptive ROI size proportional to screen height (handles 720p, 1080p, 1440p, 4K)
+        roi_half = max(24, int(h * 0.065))
         x1 = max(0, cx - roi_half)
         y1 = max(0, cy - roi_half)
         x2 = min(w, cx + roi_half)
         y2 = min(h, cy + roi_half)
         
-        roi = frame[y1:y2, x1:x2]
-        if roi.size == 0 or roi.shape[0] < 30 or roi.shape[1] < 30:
+        raw_roi = frame[y1:y2, x1:x2]
+        if raw_roi.size == 0 or raw_roi.shape[0] < 20 or raw_roi.shape[1] < 20:
             return state, gun_state
 
-        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        rh, rw = hsv_roi.shape[:2]
-        rcx, rcy = rw // 2, rh // 2
+        # Normalize to standard 96x96 analysis canvas
+        norm_roi = cv2.resize(raw_roi, (96, 96), interpolation=cv2.INTER_LINEAR)
+        hsv_roi = cv2.cvtColor(norm_roi, cv2.COLOR_BGR2HSV)
+        gray_roi = cv2.cvtColor(norm_roi, cv2.COLOR_BGR2GRAY)
 
-        # 1. Inspect Left Bracket (Blue Portal Bracket)
-        # In Portal 1, left bracket is located between 10 and 18 px left of center
-        left_bracket_box = hsv_roi[rcy - 12 : rcy + 12, max(0, rcx - 18) : max(0, rcx - 9)]
+        # 1. Left Bracket Analysis (Blue Portal Indicator: x in [14..36], y in [24..72])
+        left_hsv = hsv_roi[24:72, 14:36]
+        left_gray = gray_roi[24:72, 14:36]
         
-        # Saturated Cyan/Blue glow
+        # Saturated Cyan/Blue glow (active placed blue portal)
         mask_blue = cv2.inRange(
-            left_bracket_box,
-            np.array((85, 130, 150)),
+            left_hsv,
+            np.array((85, 120, 140)),
             np.array((125, 255, 255))
         )
-        blue_glow_count = np.count_nonzero(mask_blue)
+        blue_glow_count = int(np.count_nonzero(mask_blue))
 
-        # 2. Inspect Right Bracket (Orange Portal Bracket)
-        # Located between 9 and 18 px right of center
-        right_bracket_box = hsv_roi[rcy - 12 : rcy + 12, min(rw, rcx + 9) : min(rw, rcx + 18)]
+        # Edge detection for unlit bracket presence
+        left_edges = cv2.Canny(left_gray, 35, 110)
+        left_edge_count = int(np.count_nonzero(left_edges))
         
-        # Saturated Amber/Orange glow
+        has_left_bracket = (left_edge_count >= 8) or (blue_glow_count >= 10)
+
+        # 2. Right Bracket Analysis (Orange Portal Indicator: x in [60..82], y in [24..72])
+        right_hsv = hsv_roi[24:72, 60:82]
+        right_gray = gray_roi[24:72, 60:82]
+        
+        # Saturated Amber/Orange glow (active placed orange portal)
         mask_orange = cv2.inRange(
-            right_bracket_box,
-            np.array((8, 140, 150)),
+            right_hsv,
+            np.array((6, 130, 140)),
             np.array((25, 255, 255))
         )
-        orange_glow_count = np.count_nonzero(mask_orange)
+        orange_glow_count = int(np.count_nonzero(mask_orange))
 
-        # 3. Bracket edge detection to determine unlit bracket presence
-        gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        left_gray = gray_roi[rcy - 10 : rcy + 10, max(0, rcx - 18) : max(0, rcx - 9)]
-        right_gray = gray_roi[rcy - 10 : rcy + 10, min(rw, rcx + 9) : min(rw, rcx + 18)]
+        # Edge detection for unlit right bracket presence
+        right_edges = cv2.Canny(right_gray, 35, 110)
+        right_edge_count = int(np.count_nonzero(right_edges))
         
-        # Edges in bracket zones
-        left_edges = cv2.Canny(left_gray, 40, 120)
-        right_edges = cv2.Canny(right_gray, 40, 120)
-        
-        has_left_outline = (np.count_nonzero(left_edges) >= 4) or (blue_glow_count >= 5)
-        has_right_outline = (np.count_nonzero(right_edges) >= 4) or (orange_glow_count >= 5)
+        has_right_bracket = (right_edge_count >= 8) or (orange_glow_count >= 10)
 
-        # 4. Infer Portal Gun Inventory Level
-        if has_left_outline and has_right_outline:
+        # 3. Determine Portal Gun Inventory State
+        if has_left_bracket and has_right_bracket:
             gun_state = PortalGunState.DUAL_PORTAL
-        elif has_left_outline:
+        elif has_left_bracket:
             gun_state = PortalGunState.SINGLE_PORTAL_BLUE
         else:
             gun_state = PortalGunState.NO_GUN
 
-        # 5. Determine active placed portals based strictly on glowing pixels
-        # Blue portal is placed only if left bracket glows solid cyan
-        if blue_glow_count >= 6:
-            state.blue_ring_filled = True
+        # 4. Placed Portal Status (Only if solid glow is present in the respective bracket)
+        if gun_state != PortalGunState.NO_GUN:
+            # Blue portal is placed only if left bracket contains concentrated solid blue glow
+            state.blue_ring_filled = (blue_glow_count >= 14)
+            
+            # Orange portal is placed only if right bracket contains concentrated solid orange glow
+            if gun_state == PortalGunState.DUAL_PORTAL:
+                state.orange_ring_filled = (orange_glow_count >= 14)
+            else:
+                state.orange_ring_filled = False
         else:
-            state.blue_ring_filled = False
-
-        # Orange portal is placed only if right bracket glows solid orange
-        if orange_glow_count >= 6:
-            state.orange_ring_filled = True
-        else:
-            state.orange_ring_filled = False
-
-        # If player has No Gun, portals cannot be active on HUD
-        if gun_state == PortalGunState.NO_GUN:
             state.blue_ring_filled = False
             state.orange_ring_filled = False
 
-        # 6. Surface Conductivity under center reticle
-        center_spot = hsv_roi[rcy - 3 : rcy + 3, rcx - 3 : rcx + 3]
+        # 5. Surface Conductivity directly under center crosshair
+        center_spot = hsv_roi[44:52, 44:52]
         if center_spot.size > 0:
-            mean_sat = np.mean(center_spot[:, :, 1])
-            mean_val = np.mean(center_spot[:, :, 2])
+            mean_sat = float(np.mean(center_spot[:, :, 1]))
+            mean_val = float(np.mean(center_spot[:, :, 2]))
             
             if mean_val >= self.config.portalable_min_brightness and mean_sat <= self.config.portalable_max_saturation:
                 state.on_portalable_surface = True
