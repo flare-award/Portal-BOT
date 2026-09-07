@@ -33,6 +33,16 @@ def test_mock_screen_capture_lifecycle():
 
 
 def test_window_finder_patterns():
-    # Verify title pattern matching
     patterns = ["Portal", "hl2"]
-    assert len(patterns) == 2
+
+    # Authentic Portal 1 game titles
+    assert WindowFinder.is_game_title_match("Portal", patterns) is True
+    assert WindowFinder.is_game_title_match("Portal (32-bit)", patterns) is True
+    assert WindowFinder.is_game_title_match("Source - Portal", patterns) is True
+    assert WindowFinder.is_game_title_match("hl2", patterns) is True
+
+    # Browser / Dashboard / IDE titles (MUST NEVER BE MATCHED)
+    assert WindowFinder.is_game_title_match("Portal 1 Autonomous Bot - Google Chrome", patterns) is False
+    assert WindowFinder.is_game_title_match("Aperture Control Center - Mozilla Firefox", patterns) is False
+    assert WindowFinder.is_game_title_match("Portal-BOT Dashboard - Microsoft Edge", patterns) is False
+    assert WindowFinder.is_game_title_match("Visual Studio Code - Portal-BOT", patterns) is False
